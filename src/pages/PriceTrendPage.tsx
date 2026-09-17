@@ -161,7 +161,6 @@ const CityCard: React.FC<CityCardProps> = ({ entry, onRemove, onMaterialsChange 
 const PriceTrendPage: React.FC = () => {
   const [allCities, setAllCities] = useState<CityDTO[]>([]);
   const [entries, setEntries] = useState<CityEntry[]>([]);
-  const [pendingCity, setPendingCity] = useState<string | undefined>(undefined);
 
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
   const dateRangeInit = useRef(false);
@@ -177,20 +176,20 @@ const PriceTrendPage: React.FC = () => {
 
   // 城市下拉（按省分组，value = "省|市"）
   const cityOptions = useMemo(() => {
-      const selected = new Set(entries.map((e) => e.city));
-      const grouped: Record<string, string[]> = {};
-      allCities.forEach((c) => {
-        if (selected.has(c.city_name)) return;   // 已添加的跳过
-        if (!grouped[c.province_name]) grouped[c.province_name] = [];
-        grouped[c.province_name].push(c.city_name);
-      });
-      return Object.entries(grouped)
-        .filter(([, cities]) => cities.length > 0)   // 空省不显示
-        .map(([prov, cities]) => ({
-          label: prov,
-          options: cities.map((c) => ({ label: c, value: `${prov}|${c}` })),
-        }));
-    }, [allCities, entries]);
+    const selected = new Set(entries.map((e) => e.city));
+    const grouped: Record<string, string[]> = {};
+    allCities.forEach((c) => {
+      if (selected.has(c.city_name)) return; // 已添加的跳过
+      if (!grouped[c.province_name]) grouped[c.province_name] = [];
+      grouped[c.province_name].push(c.city_name);
+    });
+    return Object.entries(grouped)
+      .filter(([, cities]) => cities.length > 0) // 空省不显示
+      .map(([prov, cities]) => ({
+        label: prov,
+        options: cities.map((c) => ({ label: c, value: `${prov}|${c}` })),
+      }));
+  }, [allCities, entries]);
 
   // ---------- 拉城市列表 ----------
   useEffect(() => {
@@ -690,14 +689,13 @@ const PriceTrendPage: React.FC = () => {
           <Space size={6}>
             <Text strong style={{ fontSize: 13 }}>添加城市：</Text>
             <Select
+              key={`city-select-${entries.length}`}
               showSearch
               placeholder="搜索城市（按省份分组）"
               style={{ width: 240 }}
               size="small"
               options={cityOptions}
-              value={pendingCity}
               onChange={(v) => {
-                setPendingCity(undefined);
                 if (v) handleAddCity(v);
               }}
               optionFilterProp="label"
