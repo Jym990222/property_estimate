@@ -10,8 +10,8 @@ import {
   InfoCircleOutlined,
   GlobalOutlined,
   LineChartOutlined,
-  //MenuFoldOutlined,
-  //MenuUnfoldOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons';
 
 import MarketPage from './pages/MarketPage';
@@ -149,8 +149,13 @@ function App() {
                 justifyContent: 'center',
                 boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
                 overflow: 'hidden',
+                aspectRatio: '1 / 1',
               }}
             >
+              {/*  暂用纯白占位，后期把下面这行删掉，取消上面的 img 注释 */}
+              <div style={{ width: '100%', height: '100%', background: '#fff', borderRadius: 6 }} />
+
+              {/*
               <img
                 src="/icon/logo-square.png"
                 alt="中国石化"
@@ -162,6 +167,7 @@ function App() {
                   objectFit: 'contain',
                 }}
               />
+              */}
             </div>
             <div
               style={{
@@ -213,7 +219,7 @@ function App() {
             <Button
               type="text"
               aria-label={collapsed ? '展开菜单' : '收起菜单'}
-              //icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
               onClick={() => setCollapsed((v) => !v)}
               style={{
                 fontSize: 18,
