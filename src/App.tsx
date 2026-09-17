@@ -213,7 +213,7 @@ function App() {
             <Button
               type="text"
               aria-label={collapsed ? '展开菜单' : '收起菜单'}
-              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              //icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
               onClick={() => setCollapsed((v) => !v)}
               style={{
                 fontSize: 18,
@@ -234,7 +234,7 @@ function App() {
                 textOverflow: 'ellipsis',
               }}
             >
-              中石化环境科技有限公司
+              公司名占位
             </div>
 
             <div
