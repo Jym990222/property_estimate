@@ -284,11 +284,13 @@ const AiFloatingButton: React.FC = () => {
 
   const quickQuestions = ['软件有哪些功能？', '成新率怎么算？', '如何生成评估模板？'];
 
+  // 统一的弹窗样式（修正移动端定位，防止跑偏）
   const windowStyle: React.CSSProperties = isMobile
     ? {
-        position: 'absolute',
+        position: 'fixed',
+        left: 0,
         right: 0,
-        bottom: 75,
+        bottom: 0,
         width: '100vw',
         height: 'calc(100vh - 75px)',
         borderRadius: '12px 12px 0 0',
@@ -297,6 +299,7 @@ const AiFloatingButton: React.FC = () => {
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
+        zIndex: 9999,
       }
     : {
         position: 'absolute',
@@ -312,199 +315,226 @@ const AiFloatingButton: React.FC = () => {
         overflow: 'hidden',
       };
 
-  return (
-    <>
-      <Draggable bounds="body" nodeRef={dragRef} handle=".ai-drag-handle">
+  // 抽离内部渲染逻辑
+  const innerContent = (
+    <div style={{ position: 'relative' }}>
+      {/* ============ 弹窗 ============ */}
+      <div
+        className={`ai-window ${open ? 'ai-open' : 'ai-closed'}`}
+        style={{
+          ...windowStyle,
+          opacity: open ? 1 : 0,
+          transform: open ? 'scale(1) translateY(0)' : 'scale(0.85) translateY(20px)',
+          transformOrigin: 'bottom right',
+          pointerEvents: open ? 'auto' : 'none',
+          transition: 'opacity 0.25s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        }}
+      >
+        {/* 头部 */}
         <div
-          ref={dragRef}
           style={{
-            position: 'fixed',
-            right: 30,
-            bottom: 30,
-            zIndex: 1000,
+            background: 'linear-gradient(135deg, #1890ff, #52c41a)',
+            color: '#fff',
+            padding: '14px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexShrink: 0,
           }}
         >
-          {/* ============ 弹窗 ============ */}
-          <div
-            className={`ai-window ${open ? 'ai-open' : 'ai-closed'}`}
-            style={{
-              ...windowStyle,
-              opacity: open ? 1 : 0,
-              transform: open ? 'scale(1) translateY(0)' : 'scale(0.85) translateY(20px)',
-              transformOrigin: 'bottom right',
-              pointerEvents: open ? 'auto' : 'none',
-              transition: 'opacity 0.25s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-            }}
-          >
-            {/* 头部 */}
-            <div
-              style={{
-                background: 'linear-gradient(135deg, #1890ff, #52c41a)',
-                color: '#fff',
-                padding: '14px 18px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                flexShrink: 0,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                {view === 'chat' ? (
-                  <Tooltip title="返回">
-                    <button
-                      onClick={goBack}
-                      style={{
-                        background: 'rgba(255,255,255,0.2)',
-                        border: 'none',
-                        color: '#fff',
-                        width: 28,
-                        height: 28,
-                        borderRadius: 6,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <ArrowLeftOutlined style={{ fontSize: 14 }} />
-                    </button>
-                  </Tooltip>
-                ) : (
-                  <RobotOutlined style={{ fontSize: 20 }} />
-                )}
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 'bold' }}>
-                    {view === 'chat' ? currentSession?.title || '新对话' : '项目智能助手'}
-                  </div>
-                  <div style={{ fontSize: 11, opacity: 0.85 }}>基于 DeepSeek 驱动</div>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 4 }}>
-                {view === 'chat' && (
-                  <Tooltip title="清空当前对话">
-                    <button
-                      onClick={clearCurrent}
-                      style={{
-                        background: 'rgba(255,255,255,0.2)',
-                        border: 'none',
-                        color: '#fff',
-                        width: 28,
-                        height: 28,
-                        borderRadius: 6,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <DeleteOutlined style={{ fontSize: 14 }} />
-                    </button>
-                  </Tooltip>
-                )}
-                <Tooltip title="收起">
-                  <button
-                    onClick={() => setOpen(false)}
-                    style={{
-                      background: 'rgba(255,255,255,0.2)',
-                      border: 'none',
-                      color: '#fff',
-                      width: 28,
-                      height: 28,
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <MinusOutlined style={{ fontSize: 14 }} />
-                  </button>
-                </Tooltip>
-              </div>
-            </div>
-
-            {/* 主内容区 */}
-            {view === 'home' ? (
-              <HomeView
-                sessions={sessions}
-                onNewChat={newChat}
-                onOpenSession={openSession}
-                onDeleteSession={deleteSession}
-                onQuickQuestion={q => {
-                  newChat();
-                  setTimeout(() => sendMessage(q), 100);
-                }}
-                quickQuestions={quickQuestions}
-              />
-            ) : (
-              <ChatView
-                messages={messages}
-                loading={loading}
-                input={input}
-                setInput={setInput}
-                onSend={sendMessage}
-                onKeyDown={handleKeyDown}
-                listRef={listRef}
-                inputRef={inputRef}
-                copiedIndex={copiedIndex}
-                onCopy={copyMessage}
-                isMobile={isMobile}
-              />
-            )}
-          </div>
-
-          {/* ============ 悬浮按钮 ============ */}
-          <div
-            className="ai-drag-handle"
-            style={{
-              position: 'absolute',
-              right: 0,
-              bottom: 0,
-              cursor: 'move',
-            }}
-          >
-            <Tooltip title={open ? '' : 'AI 助手'} placement="left">
-              <Badge dot={hasNewReply && !open}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {view === 'chat' ? (
+              <Tooltip title="返回">
                 <button
-                  onClick={() => {
-                    setOpen(!open);
-                    if (!open) {
-                      setView(currentSessionId ? 'chat' : 'home');
-                      setHasNewReply(false);
-                    }
-                  }}
+                  onClick={goBack}
                   style={{
-                    width: 60,
-                    height: 60,
-                    borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.2)',
                     border: 'none',
-                    background: 'linear-gradient(135deg, #1890ff, #52c41a)',
                     color: '#fff',
-                    fontSize: 26,
+                    width: 28,
+                    height: 28,
+                    borderRadius: 6,
                     cursor: 'pointer',
-                    boxShadow: '0 4px 16px rgba(24,144,255,0.4)',
-                    transition: 'all 0.3s',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    outline: 'none',
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.transform = 'scale(1.1)';
-                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(24,144,255,0.6)';
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.transform = 'scale(1)';
-                    e.currentTarget.style.boxShadow = '0 4px 16px rgba(24,144,255,0.4)';
                   }}
                 >
-                  {open ? <CloseOutlined /> : <MessageOutlined />}
+                  <ArrowLeftOutlined style={{ fontSize: 14 }} />
                 </button>
-              </Badge>
+              </Tooltip>
+            ) : (
+              <RobotOutlined style={{ fontSize: 20 }} />
+            )}
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 'bold' }}>
+                {view === 'chat' ? currentSession?.title || '新对话' : '项目智能助手'}
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.85 }}>基于 DeepSeek 驱动</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {view === 'chat' && (
+              <Tooltip title="清空当前对话">
+                <button
+                  onClick={clearCurrent}
+                  style={{
+                    background: 'rgba(255,255,255,0.2)',
+                    border: 'none',
+                    color: '#fff',
+                    width: 28,
+                    height: 28,
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <DeleteOutlined style={{ fontSize: 14 }} />
+                </button>
+              </Tooltip>
+            )}
+            <Tooltip title="收起">
+              <button
+                onClick={() => setOpen(false)}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  color: '#fff',
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <MinusOutlined style={{ fontSize: 14 }} />
+              </button>
             </Tooltip>
           </div>
         </div>
-      </Draggable>
+
+        {/* 主内容区 */}
+        {view === 'home' ? (
+          <HomeView
+            sessions={sessions}
+            onNewChat={newChat}
+            onOpenSession={openSession}
+            onDeleteSession={deleteSession}
+            onQuickQuestion={q => {
+              newChat();
+              setTimeout(() => sendMessage(q), 100);
+            }}
+            quickQuestions={quickQuestions}
+          />
+        ) : (
+          <ChatView
+            messages={messages}
+            loading={loading}
+            input={input}
+            setInput={setInput}
+            onSend={sendMessage}
+            onKeyDown={handleKeyDown}
+            listRef={listRef}
+            inputRef={inputRef}
+            copiedIndex={copiedIndex}
+            onCopy={copyMessage}
+            isMobile={isMobile}
+          />
+        )}
+      </div>
+
+      {/* ============ 悬浮按钮 ============ */}
+      <div
+        className="ai-drag-handle"
+        style={{
+          position: 'absolute',
+          right: 0,
+          bottom: 0,
+          cursor: isMobile ? 'pointer' : 'move', // 手机端不显示拖拽手势
+        }}
+      >
+        <Tooltip title={open ? '' : 'AI 助手'} placement="left">
+          <Badge dot={hasNewReply && !open}>
+            <button
+              onClick={() => {
+                setOpen(!open);
+                if (!open) {
+                  setView(currentSessionId ? 'chat' : 'home');
+                  setHasNewReply(false);
+                }
+              }}
+              style={{
+                width: 60,
+                height: 60,
+                borderRadius: '50%',
+                border: 'none',
+                background: 'linear-gradient(135deg, #1890ff, #52c41a)',
+                color: '#fff',
+                fontSize: 26,
+                cursor: 'pointer',
+                boxShadow: '0 4px 16px rgba(24,144,255,0.4)',
+                transition: 'all 0.3s',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                outline: 'none',
+                touchAction: 'manipulation', // 优化移动端点击
+              }}
+              onMouseEnter={e => {
+                if (!isMobile) {
+                  e.currentTarget.style.transform = 'scale(1.1)';
+                  e.currentTarget.style.boxShadow = '0 6px 20px rgba(24,144,255,0.6)';
+                }
+              }}
+              onMouseLeave={e => {
+                if (!isMobile) {
+                  e.currentTarget.style.transform = 'scale(1)';
+                  e.currentTarget.style.boxShadow = '0 4px 16px rgba(24,144,255,0.4)';
+                }
+              }}
+            >
+              {open ? <CloseOutlined /> : <MessageOutlined />}
+            </button>
+          </Badge>
+        </Tooltip>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {isMobile ? (
+        // 移动端：固定右下角，不使用 Draggable，避免事件冲突
+        <div
+          style={{
+            position: 'fixed',
+            right: 20,
+            bottom: 20,
+            zIndex: 9999,
+          }}
+        >
+          {innerContent}
+        </div>
+      ) : (
+        // 电脑端：保留拖拽功能
+        <Draggable bounds="body" nodeRef={dragRef} handle=".ai-drag-handle">
+          <div
+            ref={dragRef}
+            style={{
+              position: 'fixed',
+              right: 30,
+              bottom: 30,
+              zIndex: 1000,
+            }}
+          >
+            {innerContent}
+          </div>
+        </Draggable>
+      )}
 
       {/* 全局样式 */}
       <style>{`
