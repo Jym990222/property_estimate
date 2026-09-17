@@ -10,8 +10,8 @@ import {
   InfoCircleOutlined,
   GlobalOutlined,
   LineChartOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
+  //MenuFoldOutlined,
+  //MenuUnfoldOutlined,
 } from '@ant-design/icons';
 
 import MarketPage from './pages/MarketPage';
