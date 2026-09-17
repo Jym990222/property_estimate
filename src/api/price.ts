@@ -1,7 +1,7 @@
 // src/api/price.ts
 
-const BASE = `${import.meta.env.VITE_API_BASE_URL}/api`;
 
+const BASE = `${import.meta.env.VITE_API_BASE_URL}/api`;
 export interface MaterialDTO {
   material_id: number;
   material_name: string;
