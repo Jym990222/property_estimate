@@ -1,8 +1,56 @@
 import {Tabs, Card, Typography, Form, Input, Button, Table, Space,  Select, Row, Col} from 'antd';
-import { scrapMockItems } from '../api/mockData';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
+
+// 废旧金属精算示例清单
+const scrapMockItems = [
+  {
+    device: '立式储罐',
+    type: '储罐',
+    qty: 1,
+    main: '碳钢',
+    w_main: 12.5,
+    sub: '不锈钢316L',
+    w_sub: 1.2,
+    rec_m: 0.92,
+    rec_s: 0.90,
+    p_main: 3650,
+    p_sub: 13800,
+    value: 6.78,
+    trace: '储罐估重：D=3m,H=5m...',
+  },
+  {
+    device: '卧式换热器',
+    type: '换热器',
+    qty: 2,
+    main: '碳钢',
+    w_main: 4.8,
+    sub: '不锈钢304',
+    w_sub: 2.6,
+    rec_m: 0.90,
+    rec_s: 0.88,
+    p_main: 3650,
+    p_sub: 13800,
+    value: 4.02,
+    trace: '换热器估重：直径1.2m，长度6m...',
+  },
+  {
+    device: '离心泵',
+    type: '泵',
+    qty: 6,
+    main: '铸钢',
+    w_main: 0.85,
+    sub: '不锈钢304',
+    w_sub: 0.32,
+    rec_m: 0.88,
+    rec_s: 0.85,
+    p_main: 3650,
+    p_sub: 13800,
+    value: 2.56,
+    trace: '泵体与叶轮分材质统计',
+  },
+];
 
 const PlantPage = () => {
   return (

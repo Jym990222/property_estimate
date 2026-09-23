@@ -51,12 +51,6 @@ export interface PriceRangeResp {
   series: PriceSeries[];
 }
 
-export async function fetchUsedMaterials(): Promise<MaterialDTO[]> {
-  const res = await fetch(`${BASE}/materials/used`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
-
 export async function fetchPriceRange(
   city: string,
   materials: string[],
@@ -79,17 +73,36 @@ export interface ProvinceAvgResp {
 
 export async function fetchProvinceAvg(
   province: string,
-  materials: string[],
+  materials?: string[],
   dateFrom?: string,
   dateTo?: string,
 ): Promise<ProvinceAvgResp> {
-  const params = new URLSearchParams({
-    province,
-    materials: materials.join(','),
-  });
+  const params = new URLSearchParams({ province });
+  if (materials && materials.length > 0) {
+    params.set('materials', materials.join(','));
+  }
   if (dateFrom) params.set('date_from', dateFrom);
   if (dateTo) params.set('date_to', dateTo);
   const res = await fetch(`${BASE}/prices/province-avg?${params.toString()}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export interface ProvinceDTO {
+  province_id: number;
+  province_name: string;
+}
+
+export async function fetchProvinces(): Promise<ProvinceDTO[]> {
+  const res = await fetch(`${BASE}/provinces`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function fetchMaterialsByProvince(
+  province: string,
+): Promise<MaterialDTO[]> {
+  const res = await fetch(`${BASE}/materials/by-province?province=${encodeURIComponent(province)}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }

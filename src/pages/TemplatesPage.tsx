@@ -1,8 +1,23 @@
 import {Tabs, Card, Radio, Button, Table, Space, Typography, Tag} from 'antd';
-import { templateLibrary } from '../api/mockData';
 
 const { Text } = Typography;
 const { Title } = Typography;
+
+// 公司标准模板库清单
+const templateLibrary = [
+  { group: '报告模板', name: '资产评估报告模板', filename: '1-1资产评估报告模板.docx' },
+  { group: '报告模板', name: '资产评估说明模板', filename: '1-2资产评估说明模板.docx' },
+  { group: '报告模板', name: '机器设备评估报告模板', filename: '1-3机器设备评估报告模板.docx' },
+  { group: '报告模板', name: '不动产评估报告模板', filename: '1-4不动产评估报告模板.docx' },
+  { group: '成本法', name: '资产评估申报表（成本法）', filename: '4-0资产评估申报表（成本法）.xls' },
+  { group: '成本法', name: '机器设备评估明细表（成本法）', filename: '4-1机器设备评估明细表.xls' },
+  { group: '成本法', name: '房屋建筑物评估明细表（成本法）', filename: '4-2房屋建筑物评估明细表.xls' },
+  { group: '成本法', name: '在建工程评估明细表（成本法）', filename: '4-3在建工程评估明细表.xls' },
+  { group: '收益法', name: '资产评估申报表（收益法）', filename: '5-0资产评估申报表（收益法）.xls' },
+  { group: '收益法', name: '现金流预测表（收益法）', filename: '5-1现金流预测表.xls' },
+  { group: '市场法', name: '资产评估申报表（市场法）', filename: '6-0资产评估申报表（市场法）.xls' },
+  { group: '市场法', name: '可比交易案例调查表', filename: '6-1可比交易案例调查表.xlsx' },
+];
 
 const TemplatesPage = () => {
   return (

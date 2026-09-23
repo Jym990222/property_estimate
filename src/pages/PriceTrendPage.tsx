@@ -12,7 +12,6 @@ import {
   Spin,
   Empty,
   Tooltip,
-  Switch,
 } from 'antd';
 import {
   DownloadOutlined,
@@ -26,8 +25,11 @@ import {
   fetchMaterialsByCity,
   fetchPriceRange,
   fetchProvinceAvg,
+  fetchProvinces,
+  fetchMaterialsByProvince,
   type PriceRangeResp,
   type ProvinceAvgResp,
+  type ProvinceDTO,
 } from '../api/price';
 
 const { Text } = Typography;
@@ -35,9 +37,6 @@ const { RangePicker } = DatePicker;
 
 // 日期下限
 const MIN_DATE = dayjs('2026-06-01');
-
-// 直辖市（省均价无意义）
-const MUNICIPALITIES = new Set(['北京', '上海', '天津', '重庆']);
 
 // 颜色调色板（城市曲线依次取色）
 const SERIES_PALETTE = [
@@ -83,6 +82,17 @@ interface ChartSeries {
   color: string;
   isProvinceAvg: boolean;
   pointMap: Map<string, number>;
+}
+
+// 选中的省份条目（每省可选一种材料显示省均价）
+interface ProvinceEntry {
+  id: string;
+  province: string;
+  material: string;            // 当前选中的材料（空串=未选）
+  availableMaterials: string[]; // 该省有数据的材料列表
+  data: ProvinceAvgResp | null; // 该省均价数据
+  loadingMaterials: boolean;
+  loadingData: boolean;
 }
 
 // ============================ 子组件：城市卡片 ============================
@@ -157,6 +167,80 @@ const CityCard: React.FC<CityCardProps> = ({ entry, onRemove, onMaterialsChange 
   );
 };
 
+// ============================ 子组件：省份卡片 ============================
+interface ProvinceCardProps {
+  entry: ProvinceEntry;
+  onRemove: () => void;
+  onMaterialChange: (mat: string) => void;
+}
+
+const ProvinceCard: React.FC<ProvinceCardProps> = ({
+  entry,
+  onRemove,
+  onMaterialChange,
+}) => {
+  const available = entry.availableMaterials ?? [];
+
+  return (
+    <Card
+      size="small"
+      styles={{ body: { padding: '8px 10px' } }}
+      style={{
+        width: 300,
+        border: '1px solid #cbd5e1',
+        background: '#f8fafc',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 6,
+        }}
+      >
+        <Space size={4}>
+          <Tag color="purple" style={{ margin: 0 }}>
+            省均价
+          </Tag>
+          <Text strong style={{ fontSize: 13 }}>
+            {entry.province}
+          </Text>
+          {entry.loadingData && <Spin size="small" />}
+        </Space>
+        <Tooltip title="移除">
+          <Button
+            type="text"
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={onRemove}
+          />
+        </Tooltip>
+      </div>
+
+      <Select
+        size="small"
+        value={entry.material || undefined}
+        onChange={onMaterialChange}
+        loading={entry.loadingMaterials}
+        placeholder={
+          entry.loadingMaterials
+            ? '加载中…'
+            : available.length === 0
+            ? '该省暂无可选材料'
+            : '选择材料'
+        }
+        disabled={entry.loadingMaterials || available.length === 0}
+        showSearch
+        optionFilterProp="label"
+        style={{ width: '100%' }}
+        options={available.map((m) => ({ label: m, value: m }))}
+      />
+    </Card>
+  );
+};
+
 // ============================ 主组件 ============================
 const PriceTrendPage: React.FC = () => {
   const [allCities, setAllCities] = useState<CityDTO[]>([]);
@@ -165,11 +249,9 @@ const PriceTrendPage: React.FC = () => {
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
   const dateRangeInit = useRef(false);
 
-  const [showProvinceAvg, setShowProvinceAvg] = useState(false);
-  const [provinceAvgMap, setProvinceAvgMap] = useState<Map<string, ProvinceAvgResp>>(
-    new Map(),
-  );
-  const [loadingProvinceAvg, setLoadingProvinceAvg] = useState(false);
+  // 省均价对比：可选省份 + 每个选中省份一条曲线
+  const [allProvinces, setAllProvinces] = useState<ProvinceDTO[]>([]);
+  const [provinceEntries, setProvinceEntries] = useState<ProvinceEntry[]>([]);
 
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
@@ -191,6 +273,14 @@ const PriceTrendPage: React.FC = () => {
       }));
   }, [allCities, entries]);
 
+  // 省份下拉（排除已选省份）
+  const provinceOptions = useMemo(() => {
+    const selected = new Set(provinceEntries.map((p) => p.province));
+    return allProvinces
+      .filter((p) => !selected.has(p.province_name))
+      .map((p) => ({ label: p.province_name, value: p.province_name }));
+  }, [allProvinces, provinceEntries]);
+
   // ---------- 拉城市列表 ----------
   useEffect(() => {
     let cancelled = false;
@@ -201,6 +291,22 @@ const PriceTrendPage: React.FC = () => {
       .catch((err) => {
         console.error(err);
         void message.error('加载城市列表失败');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ---------- 拉省份列表（有价格数据的省） ----------
+  useEffect(() => {
+    let cancelled = false;
+    fetchProvinces()
+      .then((list) => {
+        if (!cancelled) setAllProvinces(list);
+      })
+      .catch((err) => {
+        console.error(err);
+        void message.error('加载省份列表失败');
       });
     return () => {
       cancelled = true;
@@ -308,79 +414,176 @@ const PriceTrendPage: React.FC = () => {
     void loadDataForEntry(id, entry.city, mats);
   };
 
-  // ---------- 城市清空时重置 ----------
+  // ---------- 城市清空时重置日期 ----------
   useEffect(() => {
     if (entries.length === 0) {
       dateRangeInit.current = false;
       setDateRange(null);
-      setShowProvinceAvg(false);
-      setProvinceAvgMap(new Map());
     }
   }, [entries.length]);
 
   // ---------- 首次数据加载后初始化日期范围 ----------
   useEffect(() => {
     if (dateRangeInit.current) return;
+    let dates: string[] = [];
     const withData = entries.find(
       (e) => e.data?.available_dates && e.data.available_dates.length > 0,
     );
-    if (!withData?.data) return;
-    const dates = withData.data.available_dates.filter(
-      (d) => !dayjs(d).isBefore(MIN_DATE, 'day'),
-    );
+    if (withData?.data) {
+      dates = withData.data.available_dates;
+    } else {
+      const pe = provinceEntries.find((p) => p.data && p.data.series.length > 0);
+      if (pe?.data) {
+        const set = new Set<string>();
+        pe.data.series.forEach((se) => se.points.forEach((pt) => set.add(pt.date)));
+        dates = Array.from(set).sort();
+      }
+    }
+    dates = dates.filter((d) => !dayjs(d).isBefore(MIN_DATE, 'day'));
     if (dates.length === 0) return;
     setDateRange([dayjs(dates[0]), dayjs(dates[dates.length - 1])]);
     dateRangeInit.current = true;
-  }, [entries]);
+  }, [entries, provinceEntries]);
 
-  // ---------- 省均价加载 ----------
+  // ---------- 省均价：当日期范围变化时，重新加载各选中省份 ----------
   useEffect(() => {
-    if (!showProvinceAvg) {
-      setProvinceAvgMap(new Map());
-      return;
-    }
-    if (entries.length === 0) return;
-
-    const byProv = new Map<string, Set<string>>();
-    entries.forEach((e) => {
-      if (MUNICIPALITIES.has(e.province)) return;
-      if (!byProv.has(e.province)) byProv.set(e.province, new Set());
-      (e.materials ?? []).forEach((m) => byProv.get(e.province)!.add(m));
-    });
-
-    if (byProv.size === 0) {
-      setProvinceAvgMap(new Map());
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingProvinceAvg(true);
-
+    if (provinceEntries.length === 0) return;
     const from = dateRange?.[0]?.format('YYYY-MM-DD');
     const to = dateRange?.[1]?.format('YYYY-MM-DD');
 
-    Promise.all(
-      Array.from(byProv.entries()).map(async ([prov, mats]) => {
-        const resp = await fetchProvinceAvg(prov, Array.from(mats), from, to);
-        return [prov, resp] as const;
-      }),
-    )
-      .then((results) => {
-        if (cancelled) return;
-        setProvinceAvgMap(new Map(results));
-      })
-      .catch((err) => {
-        console.error(err);
-        void message.error('省均价加载失败');
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingProvinceAvg(false);
-      });
+    let cancelled = false;
+    provinceEntries.forEach((pe) => {
+      if (!pe.material) return;
+      setProvinceEntries((prev) =>
+        prev.map((x) => (x.id === pe.id ? { ...x, loadingData: true } : x)),
+      );
+      fetchProvinceAvg(pe.province, [pe.material], from, to)
+        .then((resp) => {
+          if (cancelled) return;
+          setProvinceEntries((prev) =>
+            prev.map((x) =>
+              x.id === pe.id ? { ...x, data: resp, loadingData: false } : x,
+            ),
+          );
+        })
+        .catch((err) => {
+          console.error(err);
+          if (cancelled) return;
+          void message.error(`${pe.province}省均价加载失败`);
+          setProvinceEntries((prev) =>
+            prev.map((x) =>
+              x.id === pe.id ? { ...x, data: null, loadingData: false } : x,
+            ),
+          );
+        });
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [showProvinceAvg, entries, dateRange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange]);
+
+  // ---------- 添加省份 ----------
+  const handleAddProvince = useCallback((value: string | undefined) => {
+    if (!value || typeof value !== 'string') return;
+    if (provinceEntries.some((p) => p.province === value)) {
+      void message.warning('该省份已添加');
+      return;
+    }
+    const id = genId();
+    const entry: ProvinceEntry = {
+      id,
+      province: value,
+      material: '',
+      availableMaterials: [],
+      data: null,
+      loadingMaterials: true,
+      loadingData: false,
+    };
+    setProvinceEntries((prev) => [...prev, entry]);
+
+    fetchMaterialsByProvince(value)
+      .then((list) => {
+        const names = list.map((m) => m.material_name);
+        const selected = names.length > 0 ? names[0] : '';
+        setProvinceEntries((prev) =>
+          prev.map((p) =>
+            p.id === id
+              ? {
+                  ...p,
+                  availableMaterials: names,
+                  material: selected,
+                  loadingMaterials: false,
+                }
+              : p,
+          ),
+        );
+        if (selected) {
+          const from = dateRange?.[0]?.format('YYYY-MM-DD');
+          const to = dateRange?.[1]?.format('YYYY-MM-DD');
+          setProvinceEntries((prev) =>
+            prev.map((p) => (p.id === id ? { ...p, loadingData: true } : p)),
+          );
+          fetchProvinceAvg(value, [selected], from, to)
+            .then((resp) => {
+              setProvinceEntries((prev) =>
+                prev.map((p) =>
+                  p.id === id ? { ...p, data: resp, loadingData: false } : p,
+                ),
+              );
+            })
+            .catch((err) => {
+              console.error(err);
+              void message.error(`${value}省均价加载失败`);
+              setProvinceEntries((prev) =>
+                prev.map((p) =>
+                  p.id === id ? { ...p, data: null, loadingData: false } : p,
+                ),
+              );
+            });
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        void message.error(`${value}材料列表加载失败`);
+        setProvinceEntries((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, loadingMaterials: false } : p)),
+        );
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provinceEntries, dateRange]);
+
+  // ---------- 移除省份 ----------
+  const handleRemoveProvince = (id: string) => {
+    setProvinceEntries((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  // ---------- 修改省份材料 ----------
+  const handleProvinceMaterialChange = (id: string, mat: string) => {
+    const pe = provinceEntries.find((p) => p.id === id);
+    if (!pe) return;
+    setProvinceEntries((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, material: mat, loadingData: true } : p)),
+    );
+    const from = dateRange?.[0]?.format('YYYY-MM-DD');
+    const to = dateRange?.[1]?.format('YYYY-MM-DD');
+    fetchProvinceAvg(pe.province, [mat], from, to)
+      .then((resp) => {
+        setProvinceEntries((prev) =>
+          prev.map((p) =>
+            p.id === id ? { ...p, data: resp, loadingData: false } : p,
+          ),
+        );
+      })
+      .catch((err) => {
+        console.error(err);
+        void message.error(`${pe.province}省均价加载失败`);
+        setProvinceEntries((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, data: null, loadingData: false } : p)),
+        );
+      });
+  };
 
   // ---------- 图表初始化 ----------
   useEffect(() => {
@@ -445,25 +648,31 @@ const PriceTrendPage: React.FC = () => {
       });
     });
 
-    if (showProvinceAvg) {
-      provinceAvgMap.forEach((resp, prov) => {
-        resp.series.forEach((s) => {
-          const color = colorByProvMat.get(`${prov}|${s.material}`) ?? '#94a3b8';
-          const pointMap = new Map<string, number>();
-          s.points.forEach((p) => pointMap.set(p.date, p.price));
-          result.push({
-            key: `avg-${prov}-${s.material}`,
-            name: `${prov}均价 - ${s.material}`,
-            color,
-            isProvinceAvg: true,
-            pointMap,
-          });
+    // 省均价曲线：每个选中省份一条
+    provinceEntries.forEach((pe) => {
+      if (!pe.data) return;
+      pe.data.series.forEach((s) => {
+        // 若同省同材料已由城市曲线占色，则复用；否则取新颜色
+        let color = colorByProvMat.get(`${pe.province}|${s.material}`);
+        if (!color) {
+          color = SERIES_PALETTE[colorIdx % SERIES_PALETTE.length];
+          colorIdx += 1;
+          colorByProvMat.set(`${pe.province}|${s.material}`, color);
+        }
+        const pointMap = new Map<string, number>();
+        s.points.forEach((p) => pointMap.set(p.date, p.price));
+        result.push({
+          key: `avg-${pe.id}-${s.material}`,
+          name: `${pe.province}均价 - ${s.material}`,
+          color,
+          isProvinceAvg: true,
+          pointMap,
         });
       });
-    }
+    });
 
     return result;
-  }, [entries, showProvinceAvg, provinceAvgMap]);
+  }, [entries, provinceEntries]);
 
   // ---------- ECharts option ----------
   const chartOption = useMemo(() => {
@@ -602,8 +811,14 @@ const PriceTrendPage: React.FC = () => {
     entries.forEach((e) => {
       e.data?.available_dates.forEach((d) => s.add(d));
     });
+    // 省份均价数据（从各点收集日期）
+    provinceEntries.forEach((pe) => {
+      pe.data?.series.forEach((se) => {
+        se.points.forEach((p) => s.add(p.date));
+      });
+    });
     return s;
-  }, [entries]);
+  }, [entries, provinceEntries]);
 
   const disabledDate = (current: Dayjs) => {
     if (!current) return false;
@@ -647,7 +862,13 @@ const PriceTrendPage: React.FC = () => {
 
   const hasAnyData = chartSeries.length > 0 && dateList.length > 0;
   const hasCity = entries.length > 0;
+  const hasProvince = provinceEntries.length > 0;
+  const hasAnySelection = hasCity || hasProvince;
   const allCitiesLoaded = entries.every((e) => !e.loadingData && e.data !== null);
+  const allProvincesLoaded = provinceEntries.every(
+    (p) => !p.loadingData && !p.loadingMaterials,
+  );
+  const allSelectionLoaded = allCitiesLoaded && allProvincesLoaded;
 
   return (
     <div
@@ -715,21 +936,30 @@ const PriceTrendPage: React.FC = () => {
               }}
               allowClear={false}
               disabledDate={disabledDate}
-              disabled={!hasCity}
+              disabled={!hasAnySelection}
               size="small"
               style={{ width: 230 }}
-              placeholder={(hasCity ? ['起始日期', '结束日期'] : ['先添加城市', '先添加城市']) as [string, string]}
+              placeholder={(hasAnySelection ? ['起始日期', '结束日期'] : ['先添加城市/省份', '先添加城市/省份']) as [string, string]}
             />
           </Space>
 
           <Space size={6}>
             <Text strong style={{ fontSize: 13 }}>省均价对比：</Text>
-            <Switch
+            <Select
+              showSearch
+              placeholder="选择省份"
+              style={{ width: 200 }}
               size="small"
-              checked={showProvinceAvg}
-              onChange={setShowProvinceAvg}
-              disabled={!hasCity || entries.every((e) => MUNICIPALITIES.has(e.province))}
-              loading={loadingProvinceAvg}
+              value={null}
+              options={provinceOptions}
+              onChange={(v) => {
+                if (v) handleAddProvince(v);
+              }}
+              optionFilterProp="label"
+              suffixIcon={<PlusOutlined />}
+              notFoundContent={
+                allProvinces.length === 0 ? <Spin size="small" /> : '无匹配省份'
+              }
             />
           </Space>
         </Space>
@@ -770,6 +1000,30 @@ const PriceTrendPage: React.FC = () => {
         </div>
       )}
 
+      {/* 省份卡片区（省均价对比） */}
+      {hasProvince && (
+        <div
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 8,
+            maxHeight: 180,
+            overflowY: 'auto',
+            paddingRight: 4,
+          }}
+        >
+          {provinceEntries.map((pe) => (
+            <ProvinceCard
+              key={pe.id}
+              entry={pe}
+              onRemove={() => handleRemoveProvince(pe.id)}
+              onMaterialChange={(mat) => handleProvinceMaterialChange(pe.id, mat)}
+            />
+          ))}
+        </div>
+      )}
+
       {/* 图表 */}
       <Card
         size="small"
@@ -790,7 +1044,7 @@ const PriceTrendPage: React.FC = () => {
         }}
       >
         <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-          {!hasCity && (
+          {!hasAnySelection && (
             <div
               style={{
                 position: 'absolute',
@@ -805,14 +1059,14 @@ const PriceTrendPage: React.FC = () => {
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
                 description={
                   <span style={{ fontSize: 13, color: '#94a3b8' }}>
-                    请先添加至少一个城市
+                    请先添加城市或省份
                   </span>
                 }
               />
             </div>
           )}
 
-          {hasCity && !hasAnyData && (
+          {hasAnySelection && !hasAnyData && (
             <div
               style={{
                 position: 'absolute',
@@ -823,7 +1077,7 @@ const PriceTrendPage: React.FC = () => {
                 justifyContent: 'center',
               }}
             >
-              {allCitiesLoaded ? (
+              {allSelectionLoaded ? (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
                   description={
