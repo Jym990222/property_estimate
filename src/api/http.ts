@@ -155,6 +155,11 @@ export function apiPatch<T>(path: string, body: unknown, params?: Record<string,
   return request<T>('PATCH', path, params, body);
 }
 
+/** PUT：更新资源，客户端提供改变后的完整资源 */
+export function apiPut<T>(path: string, body: unknown, params?: Record<string, QueryValue>): Promise<ApiEnvelope<T>> {
+  return request<T>('PUT', path, params, body);
+}
+
 export function apiDelete<T>(path: string, params?: Record<string, QueryValue>, body?: unknown): Promise<ApiEnvelope<T>> {
   return request<T>('DELETE', path, params, body);
 }

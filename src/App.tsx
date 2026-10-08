@@ -11,6 +11,7 @@ import {
   GlobalOutlined,
   LineChartOutlined,
   ProfileOutlined,
+  PropertySafetyOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
 } from '@ant-design/icons';
@@ -25,6 +26,7 @@ import MapPage from './pages/MapPage';
 import AiFloatingButton from './components/AiFloatingButton';
 import PriceTrendPage from './pages/PriceTrendPage';
 import LogsPage from './pages/LogsPage';
+import AssetValuationPage from './pages/AssetValuationPage';
 
 const { Header, Content, Sider } = Layout;
 
@@ -33,6 +35,7 @@ const menuItems = [
   { key: '/market', icon: <DashboardOutlined />, label: <Link to="/market">行情参数</Link> },
   { key: '/trend', icon: <LineChartOutlined />, label: <Link to="/trend">价格走势</Link> },
   { key: '/tools', icon: <ToolOutlined />, label: <Link to="/tools">工程估算工具</Link> },
+  { key: '/assets', icon: <PropertySafetyOutlined />, label: <Link to="/assets">资产评估</Link> },
   { key: '/plant', icon: <ShopOutlined />, label: <Link to="/plant">整套装置评估</Link> },
   { key: '/templates', icon: <FileTextOutlined />, label: <Link to="/templates">标准底稿生成</Link> },
   { key: '/resources', icon: <LinkOutlined />, label: <Link to="/resources">专业资源导航</Link> },
@@ -292,6 +295,7 @@ function App() {
                 <Route path="/market" element={<MarketPage />} />
                 <Route path="/trend" element={<PriceTrendPage />} />
                 <Route path="/tools" element={<ToolsPage />} />
+                <Route path="/assets" element={<AssetValuationPage />} />
                 <Route path="/plant" element={<PlantPage />} />
                 <Route path="/templates" element={<TemplatesPage />} />
                 <Route path="/resources" element={<ResourcesPage />} />
