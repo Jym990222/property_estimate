@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Input, Button, Spin, message, Tooltip, Badge, Empty } from 'antd';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Input, Button, Spin, message, Tooltip, Badge, Empty, Modal } from 'antd';
 import {
   MessageOutlined,
   CloseOutlined,
@@ -19,7 +19,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Draggable from 'react-draggable';
 import { askDeepSeek, ChatMessage } from '../api/deepseek';
-import { getApiCatalog, isKnownApiHref } from '../api/apiIndex';
+import { getApiCatalog, resolveApiHref } from '../api/apiIndex';
 import { buildSystemPrompt } from '../api/projectKnowledge';
 
 interface Message {
@@ -33,61 +33,75 @@ const API_ORIGIN = import.meta.env.VITE_API_BASE_URL as string;
 /**
  * 把回答里出现的地址转成可点击链接。
  * 模型习惯把地址写在反引号里（`` `https://…` ``），Markdown 会把反引号内容渲染成 <code>，
- * 用户点不动；这里统一识别成链接，相对接口路径（/api/...）补全为可访问的绝对地址。
+ * 用户点不动；这里统一识别成链接，相对接口路径（/api/...）补全为可访问的绝对地址，
+ * 漏写 /api 的路径（如 /price/v1/materials）也一并补全，交给 resolveApiHref 判断是否需要纠正。
  */
 function toClickableHref(raw: string): string | null {
   const text = raw.trim();
   if (/^https?:\/\/\S+$/i.test(text)) return text;
   if (text.startsWith('/api/') && !text.includes(' ')) return `${API_ORIGIN}${text}`;
+  if (/^\/(system|geo|price|futures|ai|log)\//.test(text) && !text.includes(' ')) {
+    return `${API_ORIGIN}/api${text}`;
+  }
   return null;
 }
 
-const MARKDOWN_COMPONENTS: Components = {
-  // 所有链接在新标签页打开，避免把单页应用导航走；
-  // 不在接口目录里的 /api 链接给出橙色虚线下划线 + 悬停提示（模型偶尔会缩写或改写路径）
-  a: (props) => {
-    const suspicious = typeof props.href === 'string' && isKnownApiHref(props.href) === false;
+/** 地址在目录里找不到时：不跳转，改为列出目录中最接近的接口供选择（由组件渲染受控弹窗） */
+const SUGGEST_TITLE = '这个地址不在接口目录中';
+
+/** 统一的链接渲染：命中目录 → 直接可点；自动纠正 → 可点并说明；无法纠正 → 阻止跳转给出候选 */
+function createMarkdownComponents(onSuggest: (badHref: string, suggestions: string[]) => void): Components {
+  const ApiAwareLink = ({ href, children }: { href: string; children: React.ReactNode }) => {
+    const resolution = resolveApiHref(href);
+    if (!resolution.resolved) {
+      return (
+        <a
+          href={href}
+          title="该地址不在接口目录中，点击查看最接近的接口"
+          style={{ color: '#d46b08', textDecoration: 'underline dashed', wordBreak: 'break-all' }}
+          onClick={(event) => {
+            event.preventDefault();
+            onSuggest(href, resolution.suggestions);
+          }}
+        >
+          {children}
+        </a>
+      );
+    }
     return (
       <a
-        href={props.href}
+        href={resolution.href}
         target="_blank"
         rel="noreferrer noopener"
-        title={suspicious ? '该地址不在接口目录中，可能是模型写错了' : undefined}
-        style={{
-          wordBreak: 'break-all',
-          ...(suspicious ? { color: '#d46b08', textDecoration: 'underline dashed' } : {}),
-        }}
+        title={resolution.corrected ? `已按接口目录纠正为 ${resolution.href}` : undefined}
+        style={{ wordBreak: 'break-all', ...(resolution.corrected ? { color: '#08979c' } : {}) }}
       >
-        {props.children}
+        {children}
       </a>
     );
-  },
-  code: (props) => {
-    const text = String(props.children ?? '');
-    const isBlock = Boolean(props.className) || text.includes('\n');
-    if (!isBlock) {
-      const href = toClickableHref(text);
-      if (href) {
-        const suspicious = isKnownApiHref(href) === false;
-        return (
-          <a
-            href={href}
-            target="_blank"
-            rel="noreferrer noopener"
-            title={suspicious ? '该地址不在接口目录中，可能是模型写错了' : undefined}
-            style={{
-              wordBreak: 'break-all',
-              ...(suspicious ? { color: '#d46b08', textDecoration: 'underline dashed' } : {}),
-            }}
-          >
-            {text}
-          </a>
-        );
+  };
+
+  return {
+    // 所有链接在新标签页打开，避免把单页应用导航走
+    a: (props) =>
+      typeof props.href === 'string' ? (
+        <ApiAwareLink href={props.href}>{props.children}</ApiAwareLink>
+      ) : (
+        <a>{props.children}</a>
+      ),
+    code: (props) => {
+      const text = String(props.children ?? '');
+      const isBlock = Boolean(props.className) || text.includes('\n');
+      if (!isBlock) {
+        const href = toClickableHref(text);
+        if (href) {
+          return <ApiAwareLink href={href}>{text}</ApiAwareLink>;
+        }
       }
-    }
-    return <code className={props.className}>{props.children}</code>;
-  },
-};
+      return <code className={props.className}>{props.children}</code>;
+    },
+  };
+}
 
 interface Session {
   id: string;
@@ -154,6 +168,15 @@ const AiFloatingButton: React.FC = () => {
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [hasNewReply, setHasNewReply] = useState(false);
+  /** 接口目录文本：放进 state 是为了在目录加载完成后触发一次重渲染，
+   *  否则先渲染出来的回答里的链接不会被按目录纠正/标注 */
+  const [apiCatalog, setApiCatalog] = useState('');
+  /** 地址不在接口目录中时，弹出最接近的接口供选择（如模型凭空写地址） */
+  const [apiSuggest, setApiSuggest] = useState<{ bad: string; items: string[] } | null>(null);
+  const markdownComponents = useMemo(
+    () => createMarkdownComponents((bad, items) => setApiSuggest({ bad, items })),
+    [],
+  );
 
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<React.ComponentRef<typeof Input.TextArea> | null>(null);
@@ -164,10 +187,16 @@ const AiFloatingButton: React.FC = () => {
   const dragRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    let alive = true;
     setSessions(loadSessions());
     setCurrentSessionId(loadCurrentId());
-    // 预热接口目录缓存，避免第一次提问时才去拉 GET /api 而出现停顿
-    void getApiCatalog();
+    // 拉取接口目录：既用于系统提示，也让"链接纠正"在目录就绪后重新渲染一次
+    void getApiCatalog().then((text) => {
+      if (alive) setApiCatalog(text);
+    });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -230,7 +259,7 @@ const AiFloatingButton: React.FC = () => {
 
       // 超媒体入口：把后端 GET /api 的实时接口目录并入系统提示，
       // 让助手能给出可直接调用的真实接口地址（失败时退化为纯知识库提示）
-      const systemPrompt = buildSystemPrompt(await getApiCatalog());
+      const systemPrompt = buildSystemPrompt(apiCatalog || (await getApiCatalog()));
 
       if (!sessionId) {
         sessionId = createSession(question);
@@ -297,7 +326,7 @@ const AiFloatingButton: React.FC = () => {
         setLoading(false);
       }
     },
-    [input, loading, currentSessionId, sessions, createSession, open],
+    [input, loading, currentSessionId, sessions, createSession, open, apiCatalog],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -516,6 +545,9 @@ const AiFloatingButton: React.FC = () => {
             copiedIndex={copiedIndex}
             onCopy={copyMessage}
             isMobile={isMobile}
+            markdownComponents={markdownComponents}
+            apiSuggest={apiSuggest}
+            onCloseSuggest={() => setApiSuggest(null)}
           />
         )}
       </div>
@@ -864,6 +896,11 @@ interface ChatViewProps {
   copiedIndex: number | null;
   onCopy: (content: string, idx: number) => void;
   isMobile: boolean;
+  /** 回答里的链接渲染（含按接口目录纠正/拦截） */
+  markdownComponents: Components;
+  /** 地址不在目录中时的候选弹窗数据 */
+  apiSuggest: { bad: string; items: string[] } | null;
+  onCloseSuggest: () => void;
 }
 
 const ChatView: React.FC<ChatViewProps> = ({
@@ -878,6 +915,9 @@ const ChatView: React.FC<ChatViewProps> = ({
   copiedIndex,
   onCopy,
   isMobile,
+  markdownComponents,
+  apiSuggest,
+  onCloseSuggest,
 }) => {
   return (
     <>
@@ -964,7 +1004,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
               ) : (
                 <div className="ai-markdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                     {msg.content}
                   </ReactMarkdown>
                 </div>
@@ -1066,6 +1106,34 @@ const ChatView: React.FC<ChatViewProps> = ({
           </Button>
         </div>
       </div>
+      {/* 地址不在接口目录中：给出目录里最接近的接口，避免用户点到 404 */}
+      <Modal
+        open={!!apiSuggest}
+        title={SUGGEST_TITLE}
+        onCancel={onCloseSuggest}
+        footer={<Button onClick={onCloseSuggest}>知道了</Button>}
+        width={620}
+      >
+        <div style={{ fontSize: 13, lineHeight: 2 }}>
+          <div style={{ wordBreak: 'break-all' }}>
+            模型给出的地址：<code>{apiSuggest?.bad}</code>
+          </div>
+          {apiSuggest && apiSuggest.items.length > 0 ? (
+            <>
+              <div style={{ marginTop: 8 }}>接口目录里最接近的是（可直接点开）：</div>
+              {apiSuggest.items.map((item) => (
+                <div key={item}>
+                  <a href={`${API_ORIGIN}${item}`} target="_blank" rel="noreferrer noopener">
+                    {item}
+                  </a>
+                </div>
+              ))}
+            </>
+          ) : (
+            <div style={{ marginTop: 8 }}>接口目录里没有相近的接口，可能是模型凭空写的。</div>
+          )}
+        </div>
+      </Modal>
     </>
   );
 };
