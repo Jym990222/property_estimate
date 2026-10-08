@@ -19,7 +19,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Draggable from 'react-draggable';
 import { askDeepSeek, ChatMessage } from '../api/deepseek';
-import { getApiCatalog } from '../api/apiIndex';
+import { getApiCatalog, isKnownApiHref } from '../api/apiIndex';
 import { buildSystemPrompt } from '../api/projectKnowledge';
 
 interface Message {
@@ -43,20 +43,43 @@ function toClickableHref(raw: string): string | null {
 }
 
 const MARKDOWN_COMPONENTS: Components = {
-  // 所有链接在新标签页打开，避免把单页应用导航走
-  a: (props) => (
-    <a href={props.href} target="_blank" rel="noreferrer noopener" style={{ wordBreak: 'break-all' }}>
-      {props.children}
-    </a>
-  ),
+  // 所有链接在新标签页打开，避免把单页应用导航走；
+  // 不在接口目录里的 /api 链接给出橙色虚线下划线 + 悬停提示（模型偶尔会缩写或改写路径）
+  a: (props) => {
+    const suspicious = typeof props.href === 'string' && isKnownApiHref(props.href) === false;
+    return (
+      <a
+        href={props.href}
+        target="_blank"
+        rel="noreferrer noopener"
+        title={suspicious ? '该地址不在接口目录中，可能是模型写错了' : undefined}
+        style={{
+          wordBreak: 'break-all',
+          ...(suspicious ? { color: '#d46b08', textDecoration: 'underline dashed' } : {}),
+        }}
+      >
+        {props.children}
+      </a>
+    );
+  },
   code: (props) => {
     const text = String(props.children ?? '');
     const isBlock = Boolean(props.className) || text.includes('\n');
     if (!isBlock) {
       const href = toClickableHref(text);
       if (href) {
+        const suspicious = isKnownApiHref(href) === false;
         return (
-          <a href={href} target="_blank" rel="noreferrer noopener" style={{ wordBreak: 'break-all' }}>
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer noopener"
+            title={suspicious ? '该地址不在接口目录中，可能是模型写错了' : undefined}
+            style={{
+              wordBreak: 'break-all',
+              ...(suspicious ? { color: '#d46b08', textDecoration: 'underline dashed' } : {}),
+            }}
+          >
             {text}
           </a>
         );
