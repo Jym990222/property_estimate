@@ -10,6 +10,7 @@ import {
   InfoCircleOutlined,
   GlobalOutlined,
   LineChartOutlined,
+  ProfileOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
 } from '@ant-design/icons';
@@ -23,6 +24,7 @@ import AboutPage from './pages/AboutPage';
 import MapPage from './pages/MapPage';
 import AiFloatingButton from './components/AiFloatingButton';
 import PriceTrendPage from './pages/PriceTrendPage';
+import LogsPage from './pages/LogsPage';
 
 const { Header, Content, Sider } = Layout;
 
@@ -34,6 +36,7 @@ const menuItems = [
   { key: '/plant', icon: <ShopOutlined />, label: <Link to="/plant">整套装置评估</Link> },
   { key: '/templates', icon: <FileTextOutlined />, label: <Link to="/templates">标准底稿生成</Link> },
   { key: '/resources', icon: <LinkOutlined />, label: <Link to="/resources">专业资源导航</Link> },
+  { key: '/logs', icon: <ProfileOutlined />, label: <Link to="/logs">日志维护</Link> },
   { key: '/about', icon: <InfoCircleOutlined />, label: <Link to="/about">关于与帮助</Link> },
 ];
 
@@ -292,6 +295,7 @@ function App() {
                 <Route path="/plant" element={<PlantPage />} />
                 <Route path="/templates" element={<TemplatesPage />} />
                 <Route path="/resources" element={<ResourcesPage />} />
+                <Route path="/logs" element={<LogsPage />} />
                 <Route path="/about" element={<AboutPage />} />
                 <Route path="/map" element={<MapPage />} />
               </Routes>

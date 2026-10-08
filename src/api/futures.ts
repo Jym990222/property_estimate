@@ -1,4 +1,8 @@
-const BASE = `${import.meta.env.VITE_API_BASE_URL}/api`
+// src/api/futures.ts
+// 期货行情模块：/api/futures/v1
+import { API_ORIGIN, apiGetData } from './http';
+
+const BASE = `${API_ORIGIN}/api/futures/v1`;
 
 export interface FuturesLatestDTO {
   product_code: string;
@@ -8,8 +12,17 @@ export interface FuturesLatestDTO {
   settlement: number;
 }
 
+/** 各期货品种最新一天的行情（等价于旧接口 /api/futures/latest）。 */
 export async function fetchFuturesLatest(): Promise<FuturesLatestDTO[]> {
-  const res = await fetch(`${BASE}/futures/latest`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return apiGetData<FuturesLatestDTO[]>(`${BASE}/latest-quotes`, { page_size: 200 });
+}
+
+export interface FuturesProductDTO {
+  product_code: string;
+  product_name: string;
+}
+
+/** 期货品种字典。 */
+export async function fetchFuturesProducts(): Promise<FuturesProductDTO[]> {
+  return apiGetData<FuturesProductDTO[]>(`${BASE}/products`, { page_size: 200 });
 }

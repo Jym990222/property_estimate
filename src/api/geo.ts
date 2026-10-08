@@ -1,5 +1,8 @@
 // src/api/geo.ts
-const BASE = `${import.meta.env.VITE_API_BASE_URL}/api`
+// 地理模块：/api/geo/v1
+import { API_ORIGIN, apiGet, apiGetData, type ApiEnvelope } from './http';
+
+const BASE = `${API_ORIGIN}/api/geo/v1`;
 
 export interface CityDTO {
   city_id: number;
@@ -10,11 +13,12 @@ export interface CityDTO {
   is_municipality: number;
 }
 
+/** 城市列表（含经纬度），可用省份过滤；字典类资源一次取足（page_size 上限 2000）。 */
 export async function fetchCities(province?: string): Promise<CityDTO[]> {
-  const url = province
-    ? `${BASE}/cities?province=${encodeURIComponent(province)}`
-    : `${BASE}/cities`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return apiGetData<CityDTO[]>(`${BASE}/cities`, { province_name: province, page_size: 2000 });
+}
+
+/** 需要分页与 _links 翻页信息时使用。 */
+export function fetchCitiesPage(province?: string, page = 1, pageSize = 500): Promise<ApiEnvelope<CityDTO[]>> {
+  return apiGet<CityDTO[]>(`${BASE}/cities`, { province_name: province, page, page_size: pageSize });
 }
