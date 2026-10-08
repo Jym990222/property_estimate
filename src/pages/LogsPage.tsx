@@ -233,6 +233,9 @@ const LogsPage = () => {
   }, [loadStats, statDays]);
 
   // ---------- 趋势图 ----------
+  const daily = useMemo(() => stats?.daily ?? [], [stats]);
+
+  // 容器在 JSX 中始终渲染，这里负责初始化与销毁
   useEffect(() => {
     if (!chartRef.current) return;
     const chart = echarts.init(chartRef.current);
@@ -248,19 +251,24 @@ const LogsPage = () => {
     };
   }, []);
 
-  const daily = useMemo(() => stats?.daily ?? [], [stats]);
-
   useEffect(() => {
-    const chart = chartInstance.current;
-    if (!chart || chart.isDisposed()) return;
+    const container = chartRef.current;
+    if (!container) return;
+    let chart = chartInstance.current;
+    if (!chart || chart.isDisposed()) {
+      // 兜底：容器晚于挂载出现时也能初始化
+      chart = echarts.init(container);
+      chartInstance.current = chart;
+    }
     chart.setOption(
       {
         tooltip: { trigger: 'axis' },
-        legend: { data: ['ERROR', 'WARN', 'INFO'], top: 0, itemHeight: 8, textStyle: { fontSize: 11 } },
+        legend: { data: ['FATAL', 'ERROR', 'WARN', 'INFO'], top: 0, itemHeight: 8, textStyle: { fontSize: 11 } },
         grid: { left: 40, right: 12, top: 30, bottom: 24 },
         xAxis: { type: 'category', data: daily.map((d) => d.date.slice(5)) },
         yAxis: { type: 'value', minInterval: 1 },
         series: [
+          { name: 'FATAL', type: 'bar', stack: 'x', itemStyle: { color: '#eb2f96' }, data: daily.map((d) => d.FATAL ?? 0) },
           { name: 'ERROR', type: 'bar', stack: 'x', itemStyle: { color: '#ff4d4f' }, data: daily.map((d) => d.ERROR) },
           { name: 'WARN', type: 'bar', stack: 'x', itemStyle: { color: '#faad14' }, data: daily.map((d) => d.WARN) },
           { name: 'INFO', type: 'bar', stack: 'x', itemStyle: { color: '#1890ff' }, data: daily.map((d) => d.INFO) },
@@ -268,6 +276,7 @@ const LogsPage = () => {
       },
       true,
     );
+    chart.resize();
   }, [daily]);
 
   // ---------- 交互 ----------
@@ -663,13 +672,24 @@ const LogsPage = () => {
           />
         }
       >
-        {daily.length === 0 ? (
-          <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Text type="secondary">暂无数据</Text>
-          </div>
-        ) : (
+        <div style={{ position: 'relative' }}>
+          {/* 容器必须始终渲染：否则首屏无数据时 echarts 拿不到容器，图表会一直空白 */}
           <div ref={chartRef} style={{ width: '100%', height: 180 }} />
-        )}
+          {daily.length === 0 && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                pointerEvents: 'none',
+              }}
+            >
+              <Text type="secondary">暂无数据</Text>
+            </div>
+          )}
+        </div>
       </Card>
 
       {/* ===== 明细 ===== */}

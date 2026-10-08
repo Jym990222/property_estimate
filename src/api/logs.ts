@@ -62,6 +62,8 @@ export interface LogDailyItem {
   WARN: number;
   INFO: number;
   DEBUG: number;
+  /** 仅当日存在 FATAL 级日志时后端才会返回该字段 */
+  FATAL?: number;
 }
 
 export interface LogStats {
