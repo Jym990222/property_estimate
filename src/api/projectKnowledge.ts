@@ -157,6 +157,8 @@ export function buildSystemPrompt(apiCatalog?: string): string {
 当用户询问"怎么查 / 怎么获取 / 接口地址 / 有没有接口"这类问题时，必须遵守：
 1. **只能**使用下面目录里真实存在的接口；目录里没有的一律回答"目前没有该接口"，严禁编造路径或参数；
 2. 回答时给出**完整可调用地址**（接口根地址 + 路径 + 必需参数），多值参数用分号分隔（如 cities=北京;上海）；
+   地址请写成 Markdown 链接或裸文本（例如 https://api.yumingjiang.xyz/api/price/v1/provinces ），
+   **不要用反引号包起来**，否则界面上会渲染成代码块而无法点击；
 3. 可简述返回结构：统一 {data, meta, _links}，错误为 {error: {code, message, details, request_id}}。
 
 ${apiCatalog}

@@ -15,7 +15,7 @@ import {
   HistoryOutlined,
   CommentOutlined,
 } from '@ant-design/icons';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Draggable from 'react-draggable';
 import { askDeepSeek, ChatMessage } from '../api/deepseek';
@@ -27,6 +27,44 @@ interface Message {
   content: string;
   timestamp?: number;
 }
+
+const API_ORIGIN = import.meta.env.VITE_API_BASE_URL as string;
+
+/**
+ * 把回答里出现的地址转成可点击链接。
+ * 模型习惯把地址写在反引号里（`` `https://…` ``），Markdown 会把反引号内容渲染成 <code>，
+ * 用户点不动；这里统一识别成链接，相对接口路径（/api/...）补全为可访问的绝对地址。
+ */
+function toClickableHref(raw: string): string | null {
+  const text = raw.trim();
+  if (/^https?:\/\/\S+$/i.test(text)) return text;
+  if (text.startsWith('/api/') && !text.includes(' ')) return `${API_ORIGIN}${text}`;
+  return null;
+}
+
+const MARKDOWN_COMPONENTS: Components = {
+  // 所有链接在新标签页打开，避免把单页应用导航走
+  a: (props) => (
+    <a href={props.href} target="_blank" rel="noreferrer noopener" style={{ wordBreak: 'break-all' }}>
+      {props.children}
+    </a>
+  ),
+  code: (props) => {
+    const text = String(props.children ?? '');
+    const isBlock = Boolean(props.className) || text.includes('\n');
+    if (!isBlock) {
+      const href = toClickableHref(text);
+      if (href) {
+        return (
+          <a href={href} target="_blank" rel="noreferrer noopener" style={{ wordBreak: 'break-all' }}>
+            {text}
+          </a>
+        );
+      }
+    }
+    return <code className={props.className}>{props.children}</code>;
+  },
+};
 
 interface Session {
   id: string;
@@ -95,12 +133,18 @@ const AiFloatingButton: React.FC = () => {
   const [hasNewReply, setHasNewReply] = useState(false);
 
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<any>(null);
+  const inputRef = useRef<React.ComponentRef<typeof Input.TextArea> | null>(null);
+  // React 19 的类型把 useRef(...).current 标为 readonly，而 antd 的回调 ref 需要写入，这里放宽为可变引用
+  const setInputRef = useCallback((node: React.ComponentRef<typeof Input.TextArea> | null) => {
+    (inputRef as React.MutableRefObject<React.ComponentRef<typeof Input.TextArea> | null>).current = node;
+  }, []);
   const dragRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setSessions(loadSessions());
     setCurrentSessionId(loadCurrentId());
+    // 预热接口目录缓存，避免第一次提问时才去拉 GET /api 而出现停顿
+    void getApiCatalog();
   }, []);
 
   useEffect(() => {
@@ -214,8 +258,8 @@ const AiFloatingButton: React.FC = () => {
         if (!open) {
           setHasNewReply(true);
         }
-      } catch (err: any) {
-        message.error(err?.message || 'AI 服务暂不可用');
+      } catch (err: unknown) {
+        message.error(err instanceof Error ? err.message : 'AI 服务暂不可用');
         setSessions(prev =>
           prev.map(s => {
             if (s.id !== sessionId) return s;
@@ -445,6 +489,7 @@ const AiFloatingButton: React.FC = () => {
             onKeyDown={handleKeyDown}
             listRef={listRef}
             inputRef={inputRef}
+            setInputRef={setInputRef}
             copiedIndex={copiedIndex}
             onCopy={copyMessage}
             isMobile={isMobile}
@@ -790,7 +835,9 @@ interface ChatViewProps {
   onSend: (text?: string) => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
   listRef: React.RefObject<HTMLDivElement>;
-  inputRef: React.RefObject<any>;
+  inputRef: React.RefObject<React.ComponentRef<typeof Input.TextArea> | null>;
+  /** 回调式 ref：子组件把真实节点回填到父组件的 ref（避免 React 19 readonly current 的类型冲突） */
+  setInputRef: (node: React.ComponentRef<typeof Input.TextArea> | null) => void;
   copiedIndex: number | null;
   onCopy: (content: string, idx: number) => void;
   isMobile: boolean;
@@ -804,7 +851,7 @@ const ChatView: React.FC<ChatViewProps> = ({
   onSend,
   onKeyDown,
   listRef,
-  inputRef,
+  setInputRef,
   copiedIndex,
   onCopy,
   isMobile,
@@ -894,7 +941,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
               ) : (
                 <div className="ai-markdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
                     {msg.content}
                   </ReactMarkdown>
                 </div>
@@ -964,7 +1011,7 @@ const ChatView: React.FC<ChatViewProps> = ({
         }}
       >
         <Input.TextArea
-          ref={inputRef}
+          ref={setInputRef}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={onKeyDown}
