@@ -143,3 +143,22 @@ ${PROJECT_KNOWLEDGE}
 【用户】帮我写一首诗
 【助手】抱歉，我只负责解答本软件相关的问题。您可以问我"成新率怎么算"、"如何导出评估模板"等。
 `;
+
+/**
+ * 组装系统提示。
+ * 传入 apiCatalog（来自后端 GET /api 的实时接口目录）后，助手就能回答
+ * "怎么查某省均价 / 某城市材料"这类问题并给出可直接调用的完整地址，而不是编造接口。
+ */
+export function buildSystemPrompt(apiCatalog?: string): string {
+  if (!apiCatalog) return SYSTEM_PROMPT;
+  return `${SYSTEM_PROMPT}
+
+## 对外 API 目录（实时取自后端 GET /api）
+当用户询问"怎么查 / 怎么获取 / 接口地址 / 有没有接口"这类问题时，必须遵守：
+1. **只能**使用下面目录里真实存在的接口；目录里没有的一律回答"目前没有该接口"，严禁编造路径或参数；
+2. 回答时给出**完整可调用地址**（接口根地址 + 路径 + 必需参数），多值参数用分号分隔（如 cities=北京;上海）；
+3. 可简述返回结构：统一 {data, meta, _links}，错误为 {error: {code, message, details, request_id}}。
+
+${apiCatalog}
+`;
+}

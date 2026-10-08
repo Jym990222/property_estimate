@@ -1,7 +1,20 @@
 // src/api/logs.ts
 // 日志维护模块：/api/log/v1
 // 规范要点：GET 取资源、PATCH 局部更新、DELETE 删除；清理采用“先试算（GET 同条件）再执行（DELETE）”两步。
-import { API_ORIGIN, apiCount, apiDelete, apiGet, apiGetData, apiPatch, buildQuery, type QueryValue } from './http';
+import {
+  API_ORIGIN,
+  absoluteUrl,
+  apiCount,
+  apiDelete,
+  apiGet,
+  apiGetData,
+  apiGetUrl,
+  apiPatch,
+  buildQuery,
+  type ApiEnvelope,
+  type ApiLink,
+  type QueryValue,
+} from './http';
 
 const BASE = `${API_ORIGIN}/api/log/v1`;
 
@@ -51,8 +64,16 @@ export interface LogListResp {
   page_size: number;
   pages: number;
   items: LogItem[];
+  /** 服务端给出的超媒体链接：self / next / prev / first / last / log_exports / delete / item … */
+  links: Record<string, ApiLink>;
   degraded?: boolean;
   note?: string;
+}
+
+export interface LogDetailResp {
+  item: LogItem;
+  /** 单条日志的超媒体链接：self / update / delete / same_trace … */
+  links: Record<string, ApiLink>;
 }
 
 export interface LogDailyItem {
@@ -147,17 +168,29 @@ function toParams(payload: LogQueryPayload): Record<string, QueryValue> {
   return params;
 }
 
-export async function fetchLogs(payload: LogQueryPayload): Promise<LogListResp> {
-  const envelope = await apiGet<LogItem[]>(`${BASE}/logs`, toParams(payload));
+function toListResp(envelope: ApiEnvelope<LogItem[]>): LogListResp {
   return {
     total: Number(envelope.meta.total ?? 0),
     page: Number(envelope.meta.page ?? 1),
     page_size: Number(envelope.meta.page_size ?? 20),
     pages: Number(envelope.meta.pages ?? 1),
     items: envelope.data ?? [],
+    links: envelope._links ?? {},
     degraded: Boolean(envelope.meta.degraded),
     note: typeof envelope.meta.note === 'string' ? envelope.meta.note : undefined,
   };
+}
+
+export async function fetchLogs(payload: LogQueryPayload): Promise<LogListResp> {
+  return toListResp(await apiGet<LogItem[]>(`${BASE}/logs`, toParams(payload)));
+}
+
+/**
+ * 超媒体用法：直接跟随服务端给出的翻页链接（_links.next / prev / first / last）。
+ * 好处是链接里已经带着当前全部过滤条件，客户端不需要重新拼装，也不会漏参数。
+ */
+export async function followLogs(href: string): Promise<LogListResp> {
+  return toListResp(await apiGetUrl<LogItem[]>(href));
 }
 
 export async function fetchLogStats(days = 7): Promise<LogStats> {
@@ -168,8 +201,9 @@ export async function fetchLogInfo(): Promise<LogStoreInfo> {
   return apiGetData<LogStoreInfo>(`${BASE}/log-store`);
 }
 
-export async function fetchLogDetail(logId: number): Promise<LogItem> {
-  return apiGetData<LogItem>(`${BASE}/logs/${logId}`);
+export async function fetchLogDetail(logId: number): Promise<LogDetailResp> {
+  const envelope = await apiGet<LogItem>(`${BASE}/logs/${logId}`);
+  return { item: envelope.data, links: envelope._links ?? {} };
 }
 
 /** PATCH 局部更新：人工标记重要（清理时保留） */
@@ -223,4 +257,13 @@ export async function cleanupLogFiles(before: string): Promise<number> {
 export function logExportUrl(payload: LogQueryPayload): string {
   const query = buildQuery(toParams({ ...payload, page: undefined, page_size: undefined }));
   return `${BASE}/log-exports${query}`;
+}
+
+/**
+ * 超媒体用法：优先使用服务端在列表应答里给出的 _links.log_exports，
+ * 这样"导出的条件"与"列表看到的数据"永远一致（客户端不必重拼参数）。
+ */
+export function exportUrlFromLinks(links: Record<string, ApiLink> | undefined): string | null {
+  const href = links?.log_exports?.href;
+  return href ? absoluteUrl(href) : null;
 }

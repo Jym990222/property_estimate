@@ -127,6 +127,20 @@ export function apiGet<T>(path: string, params?: Record<string, QueryValue>): Pr
   return request<T>('GET', path, params);
 }
 
+/**
+ * 把应答 _links 里的相对 href 转成可直接请求 / 打开的绝对地址。
+ * 超媒体链接的 href 都是相对 API 根路径的（如 /api/price/v1/provinces?…）。
+ */
+export function absoluteUrl(href: string): string {
+  if (/^https?:\/\//i.test(href)) return href;
+  return `${API_ORIGIN}${href.startsWith('/') ? '' : '/'}${href}`;
+}
+
+/** 超媒体用法：直接跟随服务端给出的链接，无需客户端重新拼装参数 */
+export function apiGetUrl<T>(href: string): Promise<ApiEnvelope<T>> {
+  return request<T>('GET', absoluteUrl(href));
+}
+
 /** GET 资源并只取 data（界面多数场景只关心数据体） */
 export async function apiGetData<T>(path: string, params?: Record<string, QueryValue>): Promise<T> {
   const envelope = await apiGet<T>(path, params);

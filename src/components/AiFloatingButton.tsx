@@ -19,7 +19,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Draggable from 'react-draggable';
 import { askDeepSeek, ChatMessage } from '../api/deepseek';
-import { SYSTEM_PROMPT } from '../api/projectKnowledge';
+import { getApiCatalog } from '../api/apiIndex';
+import { buildSystemPrompt } from '../api/projectKnowledge';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -160,17 +161,21 @@ const AiFloatingButton: React.FC = () => {
       let sessionId = currentSessionId;
       let historyForApi: ChatMessage[] = [];
 
+      // 超媒体入口：把后端 GET /api 的实时接口目录并入系统提示，
+      // 让助手能给出可直接调用的真实接口地址（失败时退化为纯知识库提示）
+      const systemPrompt = buildSystemPrompt(await getApiCatalog());
+
       if (!sessionId) {
         sessionId = createSession(question);
         historyForApi = [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: systemPrompt },
           { role: 'user', content: question },
         ];
       } else {
         const session = sessions.find(s => s.id === sessionId);
         const prevMessages = session?.messages ?? [];
         historyForApi = [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: systemPrompt },
           ...prevMessages.map(m => ({ role: m.role, content: m.content })),
           { role: 'user', content: question },
         ];

@@ -30,6 +30,7 @@ import {
   CloudDownloadOutlined,
   DeleteOutlined,
   EyeOutlined,
+  LinkOutlined,
   ReloadOutlined,
   StarFilled,
   StarOutlined,
@@ -42,12 +43,14 @@ import {
   deleteLogFile,
   deleteLogs,
   executeCleanup,
+  exportUrlFromLinks,
   fetchLogDetail,
   fetchLogFile,
   fetchLogFiles,
   fetchLogInfo,
   fetchLogs,
   fetchLogStats,
+  followLogs,
   logExportUrl,
   markLogKey,
   previewCleanup,
@@ -57,6 +60,7 @@ import {
   type LogStats,
   type LogStoreInfo,
 } from '../api/logs';
+import type { ApiLink } from '../api/http';
 
 const { Title, Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -108,6 +112,8 @@ const LogsPage = () => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
+  /** 服务端超媒体链接：翻页/导出直接用它，避免客户端重拼条件 */
+  const [links, setLinks] = useState<Record<string, ApiLink>>({});
 
   // ---------- 筛选条件 ----------
   const [levels, setLevels] = useState<string[]>([]);
@@ -122,7 +128,10 @@ const LogsPage = () => {
   const [stats, setStats] = useState<LogStats | null>(null);
   const [statDays, setStatDays] = useState(7);
   const [detail, setDetail] = useState<LogItem | null>(null);
+  const [detailLinks, setDetailLinks] = useState<Record<string, ApiLink>>({});
   const [detailLoading, setDetailLoading] = useState(false);
+  const [traceView, setTraceView] = useState<{ total: number; items: LogItem[] } | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
 
   // ---------- 兜底文件 ----------
@@ -169,6 +178,7 @@ const LogsPage = () => {
       const data = await fetchLogs(queryPayload());
       setItems(data.items ?? []);
       setTotal(Number(data.total ?? 0));
+      setLinks(data.links ?? {});
       if (data.degraded) {
         void message.warning('数据库日志不可用，已降级为本地文件日志');
       }
@@ -178,6 +188,24 @@ const LogsPage = () => {
       setLoading(false);
     }
   }, [queryPayload]);
+
+  /** 跟随服务端链接（超媒体）：翻页时用它，链接里已带当前全部过滤条件 */
+  const gotoHref = useCallback(async (href: string) => {
+    setLoading(true);
+    try {
+      const data = await followLogs(href);
+      setItems(data.items ?? []);
+      setTotal(Number(data.total ?? 0));
+      setLinks(data.links ?? {});
+      setPage(Number(data.page ?? 1));
+      setPageSize(Number(data.page_size ?? 20));
+      setSelectedKeys([]);
+    } catch (error) {
+      showApiError(error, '翻页失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const loadStats = useCallback(async (days: number) => {
     try {
@@ -234,6 +262,8 @@ const LogsPage = () => {
 
   // ---------- 趋势图 ----------
   const daily = useMemo(() => stats?.daily ?? [], [stats]);
+  /** 详情应答里的超媒体链接：同一请求链路 */
+  const sameTraceHref = detailLinks.same_trace?.href;
 
   // 容器在 JSX 中始终渲染，这里负责初始化与销毁
   useEffect(() => {
@@ -282,13 +312,29 @@ const LogsPage = () => {
   // ---------- 交互 ----------
   const openDetail = useCallback(async (row: LogItem) => {
     setDetail(row);
+    setDetailLinks({});
     setDetailLoading(true);
     try {
-      setDetail(await fetchLogDetail(row.log_id));
+      const data = await fetchLogDetail(row.log_id);
+      setDetail(data.item);
+      setDetailLinks(data.links ?? {});
     } catch (error) {
       showApiError(error, '日志详情加载失败');
     } finally {
       setDetailLoading(false);
+    }
+  }, []);
+
+  /** 超媒体用法：跟随详情应答里的 _links.same_trace 查看同一请求链路的全部日志 */
+  const openTraceView = useCallback(async (href: string) => {
+    setTraceLoading(true);
+    try {
+      const data = await followLogs(href);
+      setTraceView({ total: data.total, items: data.items ?? [] });
+    } catch (error) {
+      showApiError(error, '链路日志加载失败');
+    } finally {
+      setTraceLoading(false);
     }
   }, []);
 
@@ -335,7 +381,8 @@ const LogsPage = () => {
       void message.warning('当前筛选条件下没有日志可导出');
       return;
     }
-    const url = logExportUrl(queryPayload());
+    // 优先使用服务端 _links.log_exports（条件与列表完全一致），拿不到时退回客户端拼装
+    const url = exportUrlFromLinks(links) ?? logExportUrl(queryPayload());
     window.open(url, '_blank');
     void message.success('已开始导出 CSV');
   };
@@ -804,8 +851,23 @@ const LogsPage = () => {
                       pageSizeOptions: ['10', '20', '50', '100'],
                       showTotal: (count) => `共 ${count} 条`,
                       onChange: (nextPage, nextSize) => {
+                        if (nextSize !== pageSize) {
+                          setPage(1);
+                          setPageSize(nextSize);
+                          return;
+                        }
+                        // 相邻页优先跟随服务端 _links.next / prev（自带全部过滤条件）
+                        const href =
+                          nextPage === page + 1
+                            ? links.next?.href
+                            : nextPage === page - 1
+                              ? links.prev?.href
+                              : undefined;
+                        if (href) {
+                          void gotoHref(href);
+                          return;
+                        }
                         setPage(nextPage);
-                        setPageSize(nextSize);
                       },
                     }}
                   />
@@ -873,6 +935,12 @@ const LogsPage = () => {
               >
                 {detail.is_key ? '取消重要' : '标记重要'}
               </Button>
+              {/* 超媒体：详情应答里的 _links.same_trace 直接可用，客户端无需自己拼 trace_id 查询 */}
+              {sameTraceHref && (
+                <Button icon={<LinkOutlined />} loading={traceLoading} onClick={() => void openTraceView(sameTraceHref)}>
+                  同一请求链路
+                </Button>
+              )}
               <Button
                 onClick={() => {
                   void navigator.clipboard
@@ -982,6 +1050,40 @@ const LogsPage = () => {
           </>
         )}
       </Drawer>
+
+      {/* ===== 同一请求链路（跟随服务端 _links.same_trace）===== */}
+      <Modal
+        title={`同一请求链路的日志${traceView ? `（${traceView.total} 条）` : ''}`}
+        open={!!traceView}
+        onCancel={() => setTraceView(null)}
+        footer={<Button onClick={() => setTraceView(null)}>关闭</Button>}
+        width={860}
+      >
+        <Table<LogItem>
+          rowKey="log_id"
+          size="small"
+          loading={traceLoading}
+          dataSource={traceView?.items ?? []}
+          pagination={false}
+          columns={[
+            { title: '时间', dataIndex: 'created_at', width: 170 },
+            {
+              title: '级别',
+              dataIndex: 'level',
+              width: 80,
+              render: (value: string) => <Tag color={LEVEL_COLOR[value] ?? 'default'}>{value}</Tag>,
+            },
+            { title: '动作', dataIndex: 'action', width: 180, ellipsis: true },
+            { title: '摘要', dataIndex: 'message', ellipsis: true },
+            {
+              title: '状态',
+              dataIndex: 'status_code',
+              width: 70,
+              render: (value: number | null) => (value == null ? '-' : value),
+            },
+          ]}
+        />
+      </Modal>
 
       {/* ===== 清理弹窗 ===== */}
       <Modal
