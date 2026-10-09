@@ -113,13 +113,34 @@ async function parseError(response: Response): Promise<ApiError> {
 }
 
 async function request<T>(method: string, path: string, params?: Record<string, QueryValue>, body?: unknown): Promise<ApiEnvelope<T>> {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json; charset=utf-8';
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
   const response = await fetch(buildUrl(path, params), {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json; charset=utf-8' },
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) {
+    const error = await parseError(response);
+    if (error.status === 401) unauthorizedHandler?.(error);
+    throw error;
+  }
   return (await response.json()) as ApiEnvelope<T>;
+}
+
+// ---------- 鉴权令牌（由 AuthProvider 注入，避免模块循环依赖） ----------
+let authToken: string | null = null;
+let unauthorizedHandler: ((error: ApiError) => void) | null = null;
+
+/** 设置后续请求携带的 Bearer 令牌（传 null 表示未登录） */
+export function setAuthToken(token: string | null): void {
+  authToken = token;
+}
+
+/** 注册 401 处理（如清理本地会话、跳登录页） */
+export function setUnauthorizedHandler(handler: ((error: ApiError) => void) | null): void {
+  unauthorizedHandler = handler;
 }
 
 /** GET 资源（返回完整信封，集合接口可读取 meta 分页信息与 _links 翻页链接） */

@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   AutoComplete,
@@ -43,6 +43,7 @@ import {
 } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import { ApiError } from '../api/http';
+import { useAuth } from '../auth/context';
 import {
   assetImportTemplateUrl,
   createAsset,
@@ -194,6 +195,7 @@ function buildTree(items: AssetItem[]): AssetItem[] {
 
 // ============ 项目列表 ============
 const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => {
+  const { isAdmin, isLoggedIn } = useAuth();
   const [items, setItems] = useState<ValuationProject[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -262,7 +264,7 @@ const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => 
           </Button>
           <Popconfirm
             title={`删除项目 ${row.project_no}？其资产、场景、结果与轨迹都会一并删除`}
-            disabled={row.status !== 'draft'}
+            disabled={row.status !== 'draft' || !isAdmin}
             okButtonProps={{ danger: true }}
             onConfirm={() => {
               void (async () => {
@@ -276,7 +278,7 @@ const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => 
               })();
             }}
           >
-            <Button type="link" size="small" danger disabled={row.status !== 'draft'}>
+            <Button type="link" size="small" danger disabled={row.status !== 'draft' || !isAdmin}>
               删除
             </Button>
           </Popconfirm>
@@ -311,7 +313,12 @@ const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => 
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
             刷新
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={!isAdmin}
+            onClick={() => setCreateOpen(true)}
+          >
             新建评估项目
           </Button>
         </Space>
@@ -322,6 +329,22 @@ const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => 
         资产支持手工录入与 Excel 批量导入，废金属单价自动取 <Text code>price</Text> 模块行情，
         计算过程逐步留痕（审计轨迹），项目需经<Text strong>复核 → 签发</Text>两级确认。
       </Paragraph>
+
+      {!isAdmin && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={isLoggedIn ? '当前账号为只读：新建/修改项目需要超级管理员权限' : '未登录为只读模式'}
+          description={
+            <span style={{ fontSize: 12 }}>
+              可查看项目与评估结果；新建评估项目、录入资产、执行计算、复核签发、删除等操作需
+              <Text strong>超级管理员</Text>登录。
+            </span>
+          }
+          action={<Button size="small" href="/login">{isLoggedIn ? '查看账号' : '登录 / 注册'}</Button>}
+        />
+      )}
 
       <Table<ValuationProject>
         rowKey="project_id"
@@ -589,6 +612,7 @@ const AssetFormModal: React.FC<AssetFormProps> = ({ open, projectId, editing, as
 
 // ============ 工作台 ============
 const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({ projectId, onBack }) => {
+  const { isAdmin, isLoggedIn } = useAuth();
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [assets, setAssets] = useState<AssetItem[]>([]);
   const [results, setResults] = useState<ValuationResult[]>([]);
@@ -857,7 +881,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
             <Button
               type="link"
               size="small"
-              disabled={!isDraft}
+              disabled={!isDraft || !isAdmin}
               icon={<EditOutlined />}
               onClick={() => {
                 setEditingAsset(row);
@@ -867,7 +891,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
           </Tooltip>
           <Popconfirm
             title="删除该资产？"
-            disabled={!isDraft}
+            disabled={!isDraft || !isAdmin}
             onConfirm={() => {
               void (async () => {
                 try {
@@ -880,7 +904,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
               })();
             }}
           >
-            <Button type="link" size="small" danger disabled={!isDraft} icon={<DeleteOutlined />} />
+            <Button type="link" size="small" danger disabled={!isDraft || !isAdmin} icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),
@@ -1151,7 +1175,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
           <Button
             icon={<CalculatorOutlined />}
             type="primary"
-            disabled={!isDraft}
+            disabled={!isDraft || !isAdmin}
             loading={busy}
             onClick={() => void doCalculation()}
           >
@@ -1166,7 +1190,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
           </Button>
           <Button
             icon={<SafetyCertificateOutlined />}
-            disabled={status !== 'draft'}
+            disabled={status !== 'draft' || !isAdmin}
             onClick={() => setReviewOpen('review')}
           >
             复核
@@ -1175,7 +1199,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
             type="primary"
             ghost
             icon={<CheckCircleOutlined />}
-            disabled={status !== 'reviewed'}
+            disabled={status !== 'reviewed' || !isAdmin}
             onClick={() => setReviewOpen('issue')}
           >
             签发
@@ -1183,7 +1207,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
           <Tooltip title="已复核/已签发的项目如需修改，先撤回一步">
             <Button
               icon={<RollbackOutlined />}
-              disabled={status === 'draft'}
+              disabled={status === 'draft' || !isAdmin}
               onClick={() => setReviewOpen('withdraw')}
             >
               撤回
@@ -1191,6 +1215,22 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
           </Tooltip>
         </Space>
       </Space>
+
+      {!isAdmin && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={isLoggedIn ? '只读模式：当前账号无权修改该项目' : '只读模式：未登录'}
+          description={
+            <span style={{ fontSize: 12 }}>
+              评估结果、审计轨迹、底稿导出可正常查看；录入资产、执行计算、复核/签发/撤回、删除需
+              <Text strong>超级管理员</Text>登录。
+            </span>
+          }
+          action={<Button size="small" href="/login">{isLoggedIn ? '查看账号' : '登录 / 注册'}</Button>}
+        />
+      )}
 
       {status !== 'draft' && (
         <Alert
@@ -1256,7 +1296,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                   <Button
                     type="primary"
                     icon={<PlusOutlined />}
-                    disabled={!isDraft}
+                    disabled={!isDraft || !isAdmin}
                     onClick={() => {
                       setEditingAsset(null);
                       setAssetFormOpen(true);
@@ -1265,7 +1305,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                     新增资产
                   </Button>
                   <Upload beforeUpload={handleUpload} showUploadList={false} accept=".xlsx">
-                    <Button icon={<UploadOutlined />} disabled={!isDraft} loading={busy}>
+                    <Button icon={<UploadOutlined />} disabled={!isDraft || !isAdmin} loading={busy}>
                       Excel 批量导入
                     </Button>
                   </Upload>
@@ -1304,7 +1344,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                   <Button
                     type="primary"
                     icon={<PlusOutlined />}
-                    disabled={!isDraft}
+                    disabled={!isDraft || !isAdmin}
                     onClick={() => setScenarioOpen(true)}
                   >
                     新建场景
@@ -1351,7 +1391,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                       render: (_: unknown, row) => (
                         <Popconfirm
                           title="删除该场景？其计算结果将一并删除"
-                          disabled={!isDraft}
+                          disabled={!isDraft || !isAdmin}
                           onConfirm={() => {
                             void (async () => {
                               try {
@@ -1364,7 +1404,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                             })();
                           }}
                         >
-                          <Button type="link" size="small" danger disabled={!isDraft}>
+                          <Button type="link" size="small" danger disabled={!isDraft || !isAdmin}>
                             删除
                           </Button>
                         </Popconfirm>

@@ -1,6 +1,6 @@
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Layout, Menu, theme, Button } from 'antd';
-import { useState } from 'react';
+import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
+import { Layout, Menu, theme, Button, Dropdown, Space, Tag, Modal, Form, Input, Alert, message } from 'antd';
+import { useEffect, useState } from 'react';
 import {
   DashboardOutlined,
   ToolOutlined,
@@ -12,6 +12,11 @@ import {
   LineChartOutlined,
   ProfileOutlined,
   PropertySafetyOutlined,
+  UserOutlined,
+  TeamOutlined,
+  LogoutOutlined,
+  LoginOutlined,
+  KeyOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
 } from '@ant-design/icons';
@@ -27,6 +32,13 @@ import AiFloatingButton from './components/AiFloatingButton';
 import PriceTrendPage from './pages/PriceTrendPage';
 import LogsPage from './pages/LogsPage';
 import AssetValuationPage from './pages/AssetValuationPage';
+import LoginPage from './pages/LoginPage';
+import AdminUsersPage from './pages/AdminUsersPage';
+import AdminRequired from './components/AdminRequired';
+import { AuthProvider } from './auth/AuthContext';
+import { useAuth } from './auth/context';
+import { changeOwnPassword } from './api/auth';
+import { ApiError } from './api/http';
 
 const { Header, Content, Sider } = Layout;
 
@@ -44,6 +56,139 @@ const menuItems = [
 ];
 
 const MENU_KEYS = menuItems.map((item) => item.key);
+
+/** 顶栏用户区：未登录显示登录入口；已登录显示账号菜单（改密 / 用户管理 / 登出） */
+const UserMenu: React.FC = () => {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const [pwdOpen, setPwdOpen] = useState(false);
+  const [pwdForm] = Form.useForm();
+  const [busy, setBusy] = useState(false);
+
+  // 首次登录（或刚被重置口令）强制修改密码
+  useEffect(() => {
+    if (auth.mustChangePassword) setPwdOpen(true);
+  }, [auth.mustChangePassword]);
+
+  const submitPassword = async () => {
+    const values = await pwdForm.validateFields();
+    setBusy(true);
+    try {
+      await changeOwnPassword(values.old_password, values.new_password);
+      void message.success('密码已修改，请用新密码重新登录');
+      setPwdOpen(false);
+      pwdForm.resetFields();
+      await auth.logout();
+      navigate('/login', { replace: true });
+    } catch (error) {
+      const text = error instanceof ApiError
+        ? (error.detailText ? `${error.message}（${error.detailText}）` : error.message)
+        : '修改密码失败';
+      void message.error(text);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const passwordModal = (
+    <Modal
+      title="修改密码"
+      open={pwdOpen}
+      onCancel={() => {
+        if (auth.mustChangePassword) {
+          void message.warning('首次登录必须先修改密码才能执行写操作');
+          return;
+        }
+        setPwdOpen(false);
+      }}
+      onOk={() => void submitPassword()}
+      confirmLoading={busy}
+      maskClosable={!auth.mustChangePassword}
+      closable={!auth.mustChangePassword}
+      okText="确认修改"
+    >
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 12 }}
+        message={auth.mustChangePassword
+          ? '你正在使用一次性口令，请先设置自己的密码（至少 10 位，含字母与数字）'
+          : '修改后当前登录会失效，需要用新密码重新登录'}
+      />
+      <Form form={pwdForm} layout="vertical">
+        <Form.Item name="old_password" label="当前密码" rules={[{ required: true, message: '请输入当前密码' }]}>
+          <Input.Password placeholder="当前密码 / 一次性口令" autoComplete="current-password" />
+        </Form.Item>
+        <Form.Item name="new_password" label="新密码"
+                   rules={[{ required: true, message: '请输入新密码' },
+                           { min: 10, message: '至少 10 位' },
+                           { pattern: /^(?=.*[A-Za-z])(?=.*\d).+$/, message: '需同时包含字母与数字' }]}>
+          <Input.Password placeholder="至少 10 位，含字母与数字" autoComplete="new-password" />
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+
+  if (!auth.isLoggedIn) {
+    return (
+      <Space size={8}>
+        <Button size="small" icon={<LoginOutlined />} onClick={() => navigate('/login')}>
+          登录 / 注册
+        </Button>
+        {passwordModal}
+      </Space>
+    );
+  }
+
+  const items = [
+    {
+      key: 'who',
+      disabled: true,
+      label: (
+        <Space direction="vertical" size={0}>
+          <span style={{ fontWeight: 500 }}>{auth.user?.real_name}</span>
+          <span style={{ fontSize: 12, color: '#8c8c8c' }}>
+            {auth.user?.username} · {auth.user?.role_label}
+          </span>
+        </Space>
+      ),
+    },
+    { type: 'divider' as const },
+    { key: 'password', icon: <KeyOutlined />, label: '修改密码' },
+    ...(auth.isAdmin ? [{ key: 'users', icon: <TeamOutlined />, label: '用户管理' }] : []),
+    { type: 'divider' as const },
+    { key: 'logout', icon: <LogoutOutlined />, label: '登出' },
+  ];
+
+  return (
+    <Space size={8}>
+      <Dropdown
+        menu={{
+          items,
+          onClick: ({ key }) => {
+            if (key === 'password') setPwdOpen(true);
+            if (key === 'users') navigate('/admin/users');
+            if (key === 'logout') {
+              void (async () => {
+                await auth.logout();
+                void message.success('已登出');
+                navigate('/', { replace: true });
+              })();
+            }
+          },
+        }}
+      >
+        <Button size="small" icon={<UserOutlined />}>
+          {auth.user?.real_name}
+          <Tag color={auth.isAdmin ? 'gold' : 'default'} style={{ marginInlineStart: 6, marginInlineEnd: 0 }}>
+            {auth.isAdmin ? '管理员' : '只读'}
+          </Tag>
+        </Button>
+      </Dropdown>
+      {passwordModal}
+    </Space>
+  );
+};
 
 /** 布局（放在 BrowserRouter 内部，才能用 useLocation 让菜单高亮跟随当前路由） */
 function AppLayout() {
@@ -279,6 +424,10 @@ function AppLayout() {
             >
               资产评估与工程量估算软件
             </div>
+
+            <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
+              <UserMenu />
+            </div>
           </Header>
 
           <Content
@@ -308,9 +457,11 @@ function AppLayout() {
                 <Route path="/plant" element={<PlantPage />} />
                 <Route path="/templates" element={<TemplatesPage />} />
                 <Route path="/resources" element={<ResourcesPage />} />
-                <Route path="/logs" element={<LogsPage />} />
+                <Route path="/logs" element={<AdminRequired><LogsPage /></AdminRequired>} />
                 <Route path="/about" element={<AboutPage />} />
                 <Route path="/map" element={<MapPage />} />
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/admin/users" element={<AdminUsersPage />} />
               </Routes>
             </div>
           </Content>
@@ -325,7 +476,9 @@ function AppLayout() {
 function App() {
   return (
     <BrowserRouter>
-      <AppLayout />
+      <AuthProvider>
+        <AppLayout />
+      </AuthProvider>
     </BrowserRouter>
   );
 }
