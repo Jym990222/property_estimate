@@ -23,6 +23,9 @@ export interface ValuationProject {
   issued_by: string | null;
   issued_at: string | null;
   issue_note: string | null;
+  withdrawn_by: string | null;
+  withdrawn_at: string | null;
+  withdraw_note: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -33,6 +36,16 @@ export interface ValuationScenario {
   scenario_name: string;
   method: ValuationMethod;
   params: Record<string, number | null>;
+}
+
+export interface AssetGeometry {
+  type?: 'pipe' | 'tank' | 'tower' | null;
+  od_mm?: number | null;
+  wall_mm?: number | null;
+  length_m?: number | null;
+  diameter_m?: number | null;
+  height_m?: number | null;
+  factor?: number | null;
 }
 
 export interface AssetItem {
@@ -47,6 +60,8 @@ export interface AssetItem {
   quantity: number | null;
   unit: string | null;
   weight_ton: number | null;
+  estimated_weight_ton?: number | null;
+  geometry?: AssetGeometry | null;
   acquired_cost: number | null;
   installed_year: number | null;
   service_years: number | null;
@@ -71,10 +86,13 @@ export interface ValuationResult {
   result_id: number;
   scenario_id: number;
   asset_id: number;
+  asset_code?: string | null;
   asset_name: string;
   category: string | null;
   material: string | null;
   weight_ton: number | null;
+  estimated_weight_ton?: number | null;
+  parent_id?: number | null;
   scenario_name: string;
   method: ValuationMethod;
   replacement_cost: number | null;
@@ -89,6 +107,37 @@ export interface ValuationResult {
   dismantle_cost: number | null;
   liquidation_value: number | null;
   metal_price_snapshot: MetalPriceSnapshot | null;
+  /** 含下级的汇总值（装置等分组节点） */
+  subtree_value_in_use?: number | null;
+  subtree_liquidation_value?: number | null;
+  children_count?: number;
+  is_group?: boolean;
+}
+
+export interface ScenarioTotals {
+  value_in_use: number;
+  liquidation_value: number;
+}
+
+export interface SensitivityFactor {
+  name: string;
+  key: string;
+  values: number[];
+}
+
+export interface SensitivityItem {
+  scenario_id: number;
+  scenario_name: string;
+  method: ValuationMethod;
+  changes: number[];
+  baseline: number | null;
+  factors: SensitivityFactor[];
+}
+
+export interface SensitivityResponse {
+  project_id: number;
+  changes: number[];
+  items: SensitivityItem[];
 }
 
 export interface ValuationTrace {
@@ -165,6 +214,14 @@ export async function deleteProject(projectId: number): Promise<void> {
   await apiDelete(`${BASE}/valuation-projects/${projectId}`);
 }
 
+/** 撤回一步：issued → reviewed，reviewed → draft（记录撤回人与理由） */
+export async function withdrawProject(
+  projectId: number,
+  payload: { withdrawn_by?: string; note?: string },
+): Promise<ValuationProject> {
+  return (await apiPost<ValuationProject>(`${BASE}/valuation-projects/${projectId}/withdrawals`, payload)).data;
+}
+
 // ---------- 场景 ----------
 export async function fetchScenarios(projectId: number): Promise<ValuationScenario[]> {
   return apiGetData<ValuationScenario[]>(`${BASE}/valuation-projects/${projectId}/scenarios`);
@@ -227,9 +284,30 @@ export async function runCalculation(projectId: number): Promise<CalculationOutc
   return (await apiPost<CalculationOutcome>(`${BASE}/valuation-projects/${projectId}/calculations`)).data;
 }
 
-export async function fetchResults(projectId: number, scenarioId?: number): Promise<ValuationResult[]> {
-  return apiGetData<ValuationResult[]>(`${BASE}/valuation-projects/${projectId}/results`,
-    scenarioId ? { scenario_id: scenarioId } : undefined);
+export async function fetchResults(
+  projectId: number,
+  scenarioId?: number,
+): Promise<{ items: ValuationResult[]; totals: Record<string, ScenarioTotals> }> {
+  const envelope = await apiGet<ValuationResult[]>(
+    `${BASE}/valuation-projects/${projectId}/results`,
+    scenarioId ? { scenario_id: scenarioId } : undefined,
+  );
+  return {
+    items: envelope.data,
+    totals: (envelope.meta.totals ?? {}) as Record<string, ScenarioTotals>,
+  };
+}
+
+/** 敏感性分析：关键参数波动对项目合计价值的影响（不写库） */
+export async function fetchSensitivities(
+  projectId: number,
+  params?: { scenario_id?: number; changes?: number[] },
+): Promise<SensitivityResponse> {
+  const envelope = await apiGet<SensitivityResponse>(
+    `${BASE}/valuation-projects/${projectId}/sensitivities`,
+    params as Record<string, string | number | (string | number)[]> | undefined,
+  );
+  return envelope.data;
 }
 
 export async function fetchTraces(
