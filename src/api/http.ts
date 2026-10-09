@@ -140,6 +140,38 @@ export function setAuthToken(token: string | null): void {
   authToken = token;
 }
 
+/**
+ * 取当前鉴权请求头。
+ * 供**不经过 request() 的调用**使用：multipart 上传、二进制下载等，
+ * 否则这些请求不会带上 Authorization 而被判 401。
+ */
+export function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra ?? {}) };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  return headers;
+}
+
+/**
+ * 带鉴权下载文件（Excel/CSV 等）。
+ * 不能用 window.open：新标签的请求不会带上 Authorization 头，受保护接口会 401。
+ */
+export async function downloadWithAuth(url: string, fallbackName: string): Promise<void> {
+  const response = await fetch(url, { headers: authHeaders() });
+  if (!response.ok) throw await parseError(response);
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const matched = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+  const filename = matched ? decodeURIComponent(matched[1]) : fallbackName;
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 /** 注册 401 处理（如清理本地会话、跳登录页） */
 export function setUnauthorizedHandler(handler: ((error: ApiError) => void) | null): void {
   unauthorizedHandler = handler;

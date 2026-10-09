@@ -44,6 +44,7 @@ import {
 } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import { ApiError } from '../api/http';
+import { downloadWithAuth } from '../api/http';
 import { useAuth } from '../auth/context';
 import {
   addMember,
@@ -1453,7 +1454,17 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
           <Button
             icon={<CloudDownloadOutlined />}
             disabled={!detail?.computed}
-            onClick={() => window.open(valuationExportUrl(projectId), '_blank')}
+            onClick={() => {
+              void (async () => {
+                try {
+                  await downloadWithAuth(valuationExportUrl(projectId),
+                    `valuation_${project?.project_no ?? projectId}.xlsx`);
+                  void message.success('底稿已开始下载');
+                } catch (error) {
+                  showApiError(error, '导出底稿失败');
+                }
+              })();
+            }}
           >
             导出底稿
           </Button>

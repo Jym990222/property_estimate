@@ -1,6 +1,6 @@
 // src/api/asset.ts
 // 资产模块：/api/asset/v1（评估项目 / 价值场景 / 资产台账 / 计算 / 结果 / 审计轨迹 / 材质映射）
-import { API_ORIGIN, apiDelete, apiGet, apiGetData, apiPatch, apiPost, apiPut, type ApiEnvelope } from './http';
+import { API_ORIGIN, apiDelete, apiGet, apiGetData, apiPatch, apiPost, apiPut, authHeaders, type ApiEnvelope } from './http';
 
 const BASE = `${API_ORIGIN}/api/asset/v1`;
 
@@ -361,12 +361,13 @@ export async function deleteAsset(assetId: number): Promise<void> {
   await apiDelete(`${BASE}/assets/${assetId}`);
 }
 
-/** Excel 批量导入（multipart） */
+/** Excel 批量导入（multipart）——必须手动带鉴权头，否则 401 */
 export async function importAssets(projectId: number, file: File): Promise<ImportOutcome> {
   const form = new FormData();
   form.append('file', file);
   const response = await fetch(`${BASE}/valuation-projects/${projectId}/asset-imports`, {
     method: 'POST',
+    headers: authHeaders(),
     body: form,
   });
   const payload = await response.json();

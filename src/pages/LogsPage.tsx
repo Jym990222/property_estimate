@@ -37,7 +37,7 @@ import {
   WarningOutlined,
 } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
-import { ApiError } from '../api/http';
+import { ApiError, downloadWithAuth } from '../api/http';
 import {
   cleanupLogFiles,
   deleteLogFile,
@@ -383,8 +383,15 @@ const LogsPage = () => {
     }
     // 优先使用服务端 _links.log_exports（条件与列表完全一致），拿不到时退回客户端拼装
     const url = exportUrlFromLinks(links) ?? logExportUrl(queryPayload());
-    window.open(url, '_blank');
-    void message.success('已开始导出 CSV');
+    // 不能用 window.open：新标签不会带 Authorization，受保护接口会 401
+    void (async () => {
+      try {
+        await downloadWithAuth(url, `logs_${dayjs().format('YYYYMMDD_HHmmss')}.csv`);
+        void message.success('已开始导出 CSV');
+      } catch (error) {
+        showApiError(error, '导出 CSV 失败');
+      }
+    })();
   };
 
   // 规范用法：先 GET 同条件试算命中条数，确认后再 DELETE 执行
