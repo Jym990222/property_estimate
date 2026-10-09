@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Layout, Menu, theme, Button } from 'antd';
 import { useState } from 'react';
 import {
@@ -43,7 +43,11 @@ const menuItems = [
   { key: '/about', icon: <InfoCircleOutlined />, label: <Link to="/about">关于与帮助</Link> },
 ];
 
-function App() {
+const MENU_KEYS = menuItems.map((item) => item.key);
+
+/** 布局（放在 BrowserRouter 内部，才能用 useLocation 让菜单高亮跟随当前路由） */
+function AppLayout() {
+  const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
@@ -51,8 +55,13 @@ function App() {
     token: { colorBgContainer, borderRadiusLG },
   } = theme.useToken();
 
+  // 菜单高亮跟随 URL：此前用 defaultSelectedKeys 硬编码 /market，
+  // 刷新后无论当前在哪一页都会高亮"行情参数"
+  const activeKey = location.pathname === '/' ? '/market' : location.pathname;
+  const selectedKeys = MENU_KEYS.includes(activeKey) ? [activeKey] : [];
+
   return (
-    <BrowserRouter>
+    <>
       <style>{`
         .app-sider .ant-layout-sider-children {
           display: flex;
@@ -191,7 +200,7 @@ function App() {
           <Menu
             theme="dark"
             mode="inline"
-            defaultSelectedKeys={['/market']}
+            selectedKeys={selectedKeys}
             items={menuItems}
             style={{ background: '#0F172A', borderRight: 'none' }}
             onClick={() => {
@@ -309,6 +318,14 @@ function App() {
 
         <AiFloatingButton />
       </Layout>
+    </>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppLayout />
     </BrowserRouter>
   );
 }
