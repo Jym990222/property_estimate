@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Button,
@@ -32,6 +32,12 @@ import {
   type LoginLog,
   type Role,
 } from '../api/auth';
+import {
+  approveMemberApplication,
+  fetchMemberApplications,
+  rejectMemberApplication,
+  type ProjectMember,
+} from '../api/asset';
 import { useAuth } from '../auth/context';
 
 const { Title, Text, Paragraph } = Typography;
@@ -53,9 +59,10 @@ function showError(error: unknown, fallback: string): void {
 
 const AdminUsersPage: React.FC = () => {
   const auth = useAuth();
-  const [view, setView] = useState<'pending' | 'all' | 'logs'>('pending');
+  const [view, setView] = useState<'pending' | 'all' | 'applications' | 'logs'>('pending');
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
+  const [applications, setApplications] = useState<ProjectMember[]>([]);
   const [logs, setLogs] = useState<LoginLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -67,6 +74,7 @@ const AdminUsersPage: React.FC = () => {
   const [credential, setCredential] = useState<{ username: string; password: string } | null>(null);
 
   const load = useCallback(async () => {
+    if (auth.loading || !auth.isAdmin) return;   // 等鉴权就绪，且仅管理员拉数据
     setLoading(true);
     try {
       const [all, pending] = await Promise.all([
@@ -76,12 +84,15 @@ const AdminUsersPage: React.FC = () => {
       setUsers(all.items);
       setPendingCount(pending.total);
       if (view === 'logs') setLogs(await fetchLoginLogs({ page_size: 100 }));
+      if (view === 'applications') {
+        setApplications(await fetchMemberApplications({ status: 'pending' }));
+      }
     } catch (error) {
       showError(error, '用户数据加载失败');
     } finally {
       setLoading(false);
     }
-  }, [keyword, view]);
+  }, [keyword, view, auth.loading, auth.isAdmin]);
 
   useEffect(() => {
     void load();
@@ -170,6 +181,27 @@ const AdminUsersPage: React.FC = () => {
     }
   };
 
+  /** 审批项目参与申请 */
+  const handleApplication = async (action: 'approve' | 'reject', row: ProjectMember) => {
+    setBusy(true);
+    try {
+      if (action === 'approve') {
+        await approveMemberApplication(row.member_id);
+        void message.success(`已通过：${row.real_name ?? row.username} 参与《${row.project_name}》`);
+      } else {
+        await rejectMemberApplication(row.member_id, '管理员驳回');
+        void message.success('已驳回');
+      }
+      // 先本地移除，避免已处理的行还停留在待审批列表里
+      setApplications((prev) => prev.filter((item) => item.member_id !== row.member_id));
+      await load();
+    } catch (error) {
+      showError(error, action === 'approve' ? '审批失败' : '驳回失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const columns: TableProps<AuthUser>['columns'] = [
     { title: '登录名', dataIndex: 'username', width: 130 },
     { title: '姓名', dataIndex: 'real_name', width: 110 },
@@ -241,6 +273,25 @@ const AdminUsersPage: React.FC = () => {
               重置密码
             </Button>
           </Popconfirm>
+          {row.role !== 'staff' && (
+            <Popconfirm title={`将 ${row.real_name} 设为项目相关人员？（可查看所有项目）`} disabled={busy}
+                        onConfirm={() => {
+                          void (async () => {
+                            setBusy(true);
+                            try {
+                              await patchUser(row.user_id, { role: 'staff' });
+                              void message.success('已设为项目相关人员');
+                              await load();
+                            } catch (error) {
+                              showError(error, '更新失败');
+                            } finally {
+                              setBusy(false);
+                            }
+                          })();
+                        }}>
+              <Button type="link" size="small" disabled={busy}>设为项目相关人员</Button>
+            </Popconfirm>
+          )}
           {row.role !== 'admin' && (
             <Popconfirm title={`将 ${row.real_name} 提升为超级管理员？（拥有全部权限）`} disabled={busy}
                         onConfirm={() => {
@@ -304,9 +355,11 @@ const AdminUsersPage: React.FC = () => {
       </Space>
 
       <Paragraph type="secondary" style={{ fontSize: 13 }}>
-        本期权限模型：<Text strong>超级管理员</Text> 拥有全部权限（可写、可管理用户与日志）；
-        <Text strong>普通用户</Text> 仅可只读查看；<Text strong>未登录</Text> 可看公开内容。
-        自助注册的账号需在此审批通过后才能登录；发放的一次性口令需用户首登修改。
+        角色与可见范围：<Text strong>超级管理员</Text>查看并修改所有项目；
+        <Text strong>项目相关人员</Text>查看所有项目、只能修改自己参与的项目；
+        <Text strong>一般人员</Text>只能查看与修改自己参与的项目。
+        项目参与关系由管理员在项目「项目成员」中分配，或本人申请后在此审批。
+        自助注册的账号需先审批通过才能登录；发放的一次性口令需用户首登修改。
       </Paragraph>
 
       {pendingCount > 0 && view !== 'pending' && (
@@ -316,16 +369,60 @@ const AdminUsersPage: React.FC = () => {
 
       <Segmented
         value={view}
-        onChange={(value) => setView(value as 'pending' | 'all' | 'logs')}
+        onChange={(value) => setView(value as 'pending' | 'all' | 'applications' | 'logs')}
         options={[
-          { value: 'pending', label: `待审批（${pendingUsers.length}）` },
+          { value: 'pending', label: `待审批账号（${pendingUsers.length}）` },
+          { value: 'applications', label: `参与申请（${applications.length}）` },
           { value: 'all', label: `全部用户（${users.length}）` },
           { value: 'logs', label: '登录日志' },
         ]}
         style={{ marginBottom: 12 }}
       />
 
-      {view === 'logs' ? (
+      {view === 'applications' ? (
+        <Table<ProjectMember>
+          rowKey="member_id"
+          size="small"
+          loading={loading}
+          dataSource={applications}
+          pagination={{ pageSize: 20 }}
+          columns={[
+            { title: '项目编号', dataIndex: 'project_no', width: 140 },
+            { title: '项目名称', dataIndex: 'project_name', ellipsis: true },
+            { title: '申请人', dataIndex: 'real_name', width: 110, render: (v: string | null, row) => v || row.username || '-' },
+            { title: '登录名', dataIndex: 'username', width: 130 },
+            { title: '部门', dataIndex: 'department', width: 140, render: (v: string | null) => v || '-' },
+            {
+              title: '账号角色',
+              dataIndex: 'user_role',
+              width: 120,
+              render: (v: string | null) => (v === 'admin'
+                ? <Tag color="gold">超级管理员</Tag>
+                : v === 'staff' ? <Tag color="blue">项目相关人员</Tag> : <Tag>一般人员</Tag>),
+            },
+            { title: '申请说明', dataIndex: 'applied_note', ellipsis: true, render: (v: string | null) => v || '-' },
+            { title: '申请时间', dataIndex: 'created_at', width: 170 },
+            {
+              title: '操作',
+              key: 'op',
+              width: 150,
+              render: (_: unknown, row) => (
+                <Space size={0}>
+                  <Button type="link" size="small" disabled={busy}
+                          onClick={() => void handleApplication('approve', row)}>
+                    通过
+                  </Button>
+                  <Button type="link" size="small" danger disabled={busy}
+                          onClick={() => void handleApplication('reject', row)}>
+                    驳回
+                  </Button>
+                </Space>
+              ),
+            },
+          ]}
+          locale={{ emptyText: <Empty description="没有待审批的项目参与申请" /> }}
+        />
+      ) : view === 'logs' ? (
         <Table<LoginLog>
           rowKey="log_id"
           size="small"
@@ -375,8 +472,9 @@ const AdminUsersPage: React.FC = () => {
         <Form form={approveForm} layout="vertical" initialValues={{ role: 'member' }}>
           <Form.Item name="role" label="分配角色" rules={[{ required: true }]}>
             <Select options={[
-              { value: 'member', label: '普通用户（只读）—— 推荐，先给只读，后续再按需提权' },
-              { value: 'admin', label: '超级管理员（拥有全部权限，谨慎授予）' },
+              { value: 'member', label: '一般人员 —— 只能查看与修改自己参与的项目（推荐默认）' },
+              { value: 'staff', label: '项目相关人员 —— 可查看所有项目，只能修改自己参与的项目' },
+              { value: 'admin', label: '超级管理员 —— 查看并修改所有项目，可管理用户与日志（谨慎授予）' },
             ]} />
           </Form.Item>
           <Form.Item name="note" label="审批意见">

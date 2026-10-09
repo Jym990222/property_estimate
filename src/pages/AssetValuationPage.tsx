@@ -39,12 +39,16 @@ import {
   ReloadOutlined,
   RollbackOutlined,
   SafetyCertificateOutlined,
+  TeamOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import { ApiError } from '../api/http';
 import { useAuth } from '../auth/context';
 import {
+  addMember,
+  applyMembership,
+  approveMemberApplication,
   assetImportTemplateUrl,
   createAsset,
   createProject,
@@ -53,7 +57,10 @@ import {
   deleteProject,
   deleteScenario,
   fetchAssets,
+  fetchMembers,
+  fetchMyMemberships,
   fetchProjectDetail,
+  fetchProjectDirectory,
   fetchProjects,
   fetchResidualMaterials,
   fetchResults,
@@ -63,13 +70,18 @@ import {
   issueProject,
   patchAsset,
   putResidualMaterial,
+  rejectMemberApplication,
+  removeMember,
   reviewProject,
   runCalculation,
   valuationExportUrl,
   withdrawProject,
   type AssetGeometry,
   type AssetItem,
+  type DirectoryItem,
+  type MyMembership,
   type ProjectDetail,
+  type ProjectMember,
   type ResidualMaterial,
   type ScenarioTotals,
   type SensitivityResponse,
@@ -195,7 +207,10 @@ function buildTree(items: AssetItem[]): AssetItem[] {
 
 // ============ 项目列表 ============
 const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => {
-  const { isAdmin, isLoggedIn } = useAuth();
+  const { isLoggedIn, loading: authLoading, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const canCreate = user?.role === 'admin' || user?.role === 'staff';
+  const viewAll = canCreate;
   const [items, setItems] = useState<ValuationProject[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -204,23 +219,68 @@ const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => 
   const [createOpen, setCreateOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
+  const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [directory, setDirectory] = useState<DirectoryItem[]>([]);
+  const [directoryKeyword, setDirectoryKeyword] = useState('');
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [applyingId, setApplyingId] = useState<number | null>(null);
+  const [mine, setMine] = useState<MyMembership[]>([]);
+  const [applyNote, setApplyNote] = useState('');
+  const [applyTarget, setApplyTarget] = useState<DirectoryItem | ValuationProject | null>(null);
 
   const load = useCallback(async () => {
+    // 等鉴权就绪再拉数据：否则首屏请求可能早于令牌注入
+    if (authLoading) return;
+    if (!isLoggedIn) {
+      setItems([]);
+      setTotal(0);
+      setMine([]);
+      return;
+    }
     setLoading(true);
     try {
       const data = await fetchProjects({ status, keyword: keyword.trim() || undefined, page_size: 100 });
       setItems(data.items);
       setTotal(data.total);
+      setMine(await fetchMyMemberships().catch(() => [] as MyMembership[]));
     } catch (error) {
       showApiError(error, '项目列表加载失败');
     } finally {
       setLoading(false);
     }
-  }, [status, keyword]);
+  }, [status, keyword, isLoggedIn, authLoading]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const searchDirectory = async (value?: string) => {
+    setDirectoryLoading(true);
+    try {
+      setDirectory(await fetchProjectDirectory(value?.trim() || undefined));
+    } catch (error) {
+      showApiError(error, '项目目录查询失败');
+    } finally {
+      setDirectoryLoading(false);
+    }
+  };
+
+  const submitApply = async () => {
+    if (!applyTarget) return;
+    setApplyingId(applyTarget.project_id);
+    try {
+      await applyMembership(applyTarget.project_id, applyNote || undefined);
+      void message.success('申请已提交，等待超级管理员审批');
+      setApplyTarget(null);
+      setApplyNote('');
+      await load();
+      if (directoryOpen) await searchDirectory(directoryKeyword);
+    } catch (error) {
+      showApiError(error, '提交申请失败');
+    } finally {
+      setApplyingId(null);
+    }
+  };
 
   const submit = async () => {
     const values = await form.validateFields();
@@ -241,27 +301,53 @@ const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => 
     }
   };
 
+  const MEMBERSHIP_TAG: Record<string, { color: string; text: string }> = {
+    active: { color: 'green', text: '已参与' },
+    pending: { color: 'orange', text: '申请中' },
+    rejected: { color: 'default', text: '已驳回' },
+  };
+
   const columns: TableProps<ValuationProject>['columns'] = [
-    { title: '项目编号', dataIndex: 'project_no', width: 150 },
+    { title: '项目编号', dataIndex: 'project_no', width: 140 },
     { title: '项目名称', dataIndex: 'project_name', ellipsis: true },
-    { title: '基准日', dataIndex: 'base_date', width: 110 },
-    { title: '取价城市', dataIndex: 'reference_city', width: 90 },
+    { title: '基准日', dataIndex: 'base_date', width: 105 },
+    { title: '取价城市', dataIndex: 'reference_city', width: 85 },
     {
       title: '状态',
       dataIndex: 'status',
-      width: 90,
+      width: 85,
       render: (value: string) => <Tag color={STATUS_TAG[value]?.color}>{STATUS_TAG[value]?.text ?? value}</Tag>,
     },
-    { title: '评估目的', dataIndex: 'valuation_purpose', ellipsis: true },
+    {
+      title: '我的参与',
+      dataIndex: 'my_membership',
+      width: 100,
+      render: (value: string | null) => (value
+        ? <Tag color={MEMBERSHIP_TAG[value]?.color}>{MEMBERSHIP_TAG[value]?.text ?? value}</Tag>
+        : <Text type="secondary">未参与</Text>),
+    },
+    {
+      title: '参与人数',
+      dataIndex: 'member_count',
+      width: 90,
+      align: 'center' as const,
+      render: (value: number) => value ?? 0,
+    },
     {
       title: '操作',
       key: 'op',
-      width: 130,
+      width: 190,
       render: (_: unknown, row) => (
         <Space size={0}>
           <Button type="link" size="small" onClick={() => onOpen(row.project_id)}>
             进入
           </Button>
+          {row.my_membership !== 'active' && row.my_membership !== 'pending' && isLoggedIn && (
+            <Button type="link" size="small" disabled={applyingId === row.project_id}
+                    onClick={() => setApplyTarget(row)}>
+              申请参与
+            </Button>
+          )}
           <Popconfirm
             title={`删除项目 ${row.project_no}？其资产、场景、结果与轨迹都会一并删除`}
             disabled={row.status !== 'draft' || !isAdmin}
@@ -314,9 +400,19 @@ const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => 
             刷新
           </Button>
           <Button
+            icon={<TeamOutlined />}
+            onClick={() => {
+              setDirectoryOpen(true);
+              void searchDirectory('');
+            }}
+            disabled={!isLoggedIn}
+          >
+            找项目 / 申请参与
+          </Button>
+          <Button
             type="primary"
             icon={<PlusOutlined />}
-            disabled={!isAdmin}
+            disabled={!canCreate}
             onClick={() => setCreateOpen(true)}
           >
             新建评估项目
@@ -328,21 +424,55 @@ const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => 
         石化行业资产评估：按<Text strong>成本法（在用价值）</Text>与<Text strong>清算/拆解价值</Text>两种口径测算，
         资产支持手工录入与 Excel 批量导入，废金属单价自动取 <Text code>price</Text> 模块行情，
         计算过程逐步留痕（审计轨迹），项目需经<Text strong>复核 → 签发</Text>两级确认。
+        <br />
+        权限：<Text strong>超级管理员</Text>可查看并修改所有项目；
+        <Text strong>项目相关人员</Text>可查看所有项目、只能修改自己参与的项目；
+        <Text strong>一般人员</Text>只能查看与修改自己参与的项目。参与关系由管理员分配或本人申请后审批。
       </Paragraph>
 
-      {!isAdmin && (
+      {!isLoggedIn && (
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message={isLoggedIn ? '当前账号为只读：新建/修改项目需要超级管理员权限' : '未登录为只读模式'}
+          message="未登录：评估项目数据需要登录后按参与情况查看"
           description={
             <span style={{ fontSize: 12 }}>
-              可查看项目与评估结果；新建评估项目、录入资产、执行计算、复核签发、删除等操作需
-              <Text strong>超级管理员</Text>登录。
+              行情、价格走势、工程估算工具等公开内容无需登录。
             </span>
           }
-          action={<Button size="small" href="/login">{isLoggedIn ? '查看账号' : '登录 / 注册'}</Button>}
+          action={<Button size="small" href="/login">登录 / 注册</Button>}
+        />
+      )}
+
+      {isLoggedIn && !viewAll && (
+        <Alert
+          type={mine.some((m) => m.membership_status === 'pending') ? 'warning' : 'info'}
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={`当前账号（${user?.role_label}）只能查看自己参与的项目`}
+          description={
+            <span style={{ fontSize: 12 }}>
+              你参与 {mine.filter((m) => m.membership_status === 'active').length} 个项目、
+              申请中 {mine.filter((m) => m.membership_status === 'pending').length} 个。
+              需要查看其他项目时，用右上角「找项目 / 申请参与」提交申请，由超级管理员审批。
+            </span>
+          }
+        />
+      )}
+
+      {isLoggedIn && viewAll && !isAdmin && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="项目相关人员：可查看所有项目；录入资产、执行计算等修改操作仅限你参与的项目"
+          description={
+            <span style={{ fontSize: 12 }}>
+              你参与 {mine.filter((m) => m.membership_status === 'active').length} 个项目；
+              未参与的项目可点行内「申请参与」加入。
+            </span>
+          }
         />
       )}
 
@@ -399,6 +529,97 @@ const ProjectList: React.FC<{ onOpen: (id: number) => void }> = ({ onOpen }) => 
             <Input.TextArea rows={2} placeholder="如 假设基准日后无重大技术改造" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 项目目录：任何登录用户都可查找并申请参与 */}
+      <Modal
+        title="项目目录（申请参与）"
+        open={directoryOpen}
+        onCancel={() => setDirectoryOpen(false)}
+        footer={<Button onClick={() => setDirectoryOpen(false)}>关闭</Button>}
+        width={880}
+      >
+        <Space style={{ marginBottom: 12 }}>
+          <Input.Search
+            placeholder="项目编号 / 名称"
+            style={{ width: 280 }}
+            allowClear
+            value={directoryKeyword}
+            onChange={(e) => setDirectoryKeyword(e.target.value)}
+            onSearch={(value) => void searchDirectory(value)}
+          />
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            目录只显示编号/名称/基准日/状态；评估结果等数据需成为参与人员后才能查看。
+          </Text>
+        </Space>
+        <Table<DirectoryItem>
+          rowKey="project_id"
+          size="small"
+          loading={directoryLoading}
+          dataSource={directory}
+          pagination={{ pageSize: 10 }}
+          columns={[
+            { title: '项目编号', dataIndex: 'project_no', width: 140 },
+            { title: '项目名称', dataIndex: 'project_name', ellipsis: true },
+            { title: '基准日', dataIndex: 'base_date', width: 110 },
+            {
+              title: '状态',
+              dataIndex: 'status',
+              width: 90,
+              render: (value: string) => (
+                <Tag color={STATUS_TAG[value]?.color}>{STATUS_TAG[value]?.text ?? value}</Tag>
+              ),
+            },
+            {
+              title: '我的参与',
+              dataIndex: 'my_membership',
+              width: 100,
+              render: (value: string | null) => (value
+                ? <Tag color={MEMBERSHIP_TAG[value]?.color}>{MEMBERSHIP_TAG[value]?.text ?? value}</Tag>
+                : <Text type="secondary">未参与</Text>),
+            },
+            {
+              title: '操作',
+              key: 'op',
+              width: 120,
+              render: (_: unknown, row) => (row.my_membership === 'active'
+                ? <Text type="secondary">已是参与人员</Text>
+                : row.my_membership === 'pending'
+                  ? <Tag color="orange">待审批</Tag>
+                  : (
+                    <Button type="link" size="small" disabled={applyingId === row.project_id}
+                            onClick={() => setApplyTarget(row)}>
+                      申请参与
+                    </Button>
+                  )),
+            },
+          ]}
+          locale={{ emptyText: <Empty description="没有匹配的项目" /> }}
+        />
+      </Modal>
+
+      <Modal
+        title="申请参与项目"
+        open={!!applyTarget}
+        onCancel={() => setApplyTarget(null)}
+        onOk={() => void submitApply()}
+        confirmLoading={applyingId === applyTarget?.project_id}
+      >
+        {applyTarget && (
+          <Descriptions column={1} size="small" style={{ marginBottom: 12 }}>
+            <Descriptions.Item label="项目编号">{applyTarget.project_no}</Descriptions.Item>
+            <Descriptions.Item label="项目名称">{applyTarget.project_name}</Descriptions.Item>
+          </Descriptions>
+        )}
+        <Input.TextArea
+          rows={3}
+          value={applyNote}
+          onChange={(e) => setApplyNote(e.target.value)}
+          placeholder="申请说明（选填），如：我是本项目造价人员 / 负责该装置拆除评估"
+        />
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          提交后由超级管理员审批；通过后你可查看并修改该项目。
+        </Text>
       </Modal>
     </>
   );
@@ -612,7 +833,11 @@ const AssetFormModal: React.FC<AssetFormProps> = ({ open, projectId, editing, as
 
 // ============ 工作台 ============
 const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({ projectId, onBack }) => {
-  const { isAdmin, isLoggedIn } = useAuth();
+  const { isLoggedIn, loading: authLoading, user } = useAuth();
+  const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [memberOpen, setMemberOpen] = useState(false);
+  const [memberForm] = Form.useForm();
+  const [applying, setApplying] = useState(false);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [assets, setAssets] = useState<AssetItem[]>([]);
   const [results, setResults] = useState<ValuationResult[]>([]);
@@ -637,16 +862,22 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
 
   const status = detail?.project.status ?? 'draft';
   const isDraft = status === 'draft';
+  // 权限由服务端判定：canEdit=可改项目数据（管理员或本项目参与人员）；canAdmin=可做复核/签发/撤回/删除
+  const canEdit = detail?.can_edit ?? false;
+  const canAdmin = detail?.can_admin ?? false;
+  const myMembership = detail?.my_membership ?? null;
 
   const load = useCallback(async () => {
+    if (authLoading) return;   // 等鉴权就绪，避免首个请求不带令牌
     setLoading(true);
     try {
-      const [projectDetail, assetList, resultPage, traceList, materialList] = await Promise.all([
+      const [projectDetail, assetList, resultPage, traceList, materialList, memberList] = await Promise.all([
         fetchProjectDetail(projectId),
         fetchAssets(projectId),
         fetchResults(projectId),
         fetchTraces(projectId),
         fetchResidualMaterials(),
+        fetchMembers(projectId).catch(() => [] as ProjectMember[]),
       ]);
       setDetail(projectDetail);
       setAssets(assetList);
@@ -654,13 +885,14 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
       setTotals(resultPage.totals);
       setTraces(traceList);
       setMaterials(materialList);
+      setMembers(memberList);
       setResultScenarioId((prev) => prev ?? projectDetail.scenarios[0]?.scenario_id);
     } catch (error) {
       showApiError(error, '项目数据加载失败');
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, authLoading]);
 
   useEffect(() => {
     void load();
@@ -781,6 +1013,43 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
     }
   };
 
+  const submitMember = async () => {
+    const values = await memberForm.validateFields();
+    setBusy(true);
+    try {
+      await addMember(projectId, { username: String(values.username).trim(), note: values.note });
+      void message.success('已分配为项目参与人员');
+      setMemberOpen(false);
+      memberForm.resetFields();
+      await load();
+    } catch (error) {
+      showApiError(error, '分配参与人员失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleMemberAction = async (action: 'approve' | 'reject' | 'remove', row: ProjectMember) => {
+    setBusy(true);
+    try {
+      if (action === 'approve') {
+        await approveMemberApplication(row.member_id);
+        void message.success(`已通过：${row.real_name ?? row.username}`);
+      } else if (action === 'reject') {
+        await rejectMemberApplication(row.member_id, '管理员驳回');
+        void message.success('已驳回');
+      } else {
+        await removeMember(row.project_id, row.user_id);
+        void message.success('已移除');
+      }
+      await load();
+    } catch (error) {
+      showApiError(error, action === 'approve' ? '审批失败' : action === 'reject' ? '驳回失败' : '移除失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submitMaterial = async () => {
     if (!materialEditing) return;
     const values = await materialForm.validateFields();
@@ -881,7 +1150,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
             <Button
               type="link"
               size="small"
-              disabled={!isDraft || !isAdmin}
+              disabled={!isDraft || !canEdit}
               icon={<EditOutlined />}
               onClick={() => {
                 setEditingAsset(row);
@@ -891,7 +1160,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
           </Tooltip>
           <Popconfirm
             title="删除该资产？"
-            disabled={!isDraft || !isAdmin}
+            disabled={!isDraft || !canEdit}
             onConfirm={() => {
               void (async () => {
                 try {
@@ -904,7 +1173,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
               })();
             }}
           >
-            <Button type="link" size="small" danger disabled={!isDraft || !isAdmin} icon={<DeleteOutlined />} />
+            <Button type="link" size="small" danger disabled={!isDraft || !canEdit} icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),
@@ -1175,7 +1444,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
           <Button
             icon={<CalculatorOutlined />}
             type="primary"
-            disabled={!isDraft || !isAdmin}
+            disabled={!isDraft || !canEdit}
             loading={busy}
             onClick={() => void doCalculation()}
           >
@@ -1190,7 +1459,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
           </Button>
           <Button
             icon={<SafetyCertificateOutlined />}
-            disabled={status !== 'draft' || !isAdmin}
+            disabled={status !== 'draft' || !canAdmin}
             onClick={() => setReviewOpen('review')}
           >
             复核
@@ -1199,7 +1468,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
             type="primary"
             ghost
             icon={<CheckCircleOutlined />}
-            disabled={status !== 'reviewed' || !isAdmin}
+            disabled={status !== 'reviewed' || !canAdmin}
             onClick={() => setReviewOpen('issue')}
           >
             签发
@@ -1207,7 +1476,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
           <Tooltip title="已复核/已签发的项目如需修改，先撤回一步">
             <Button
               icon={<RollbackOutlined />}
-              disabled={status === 'draft' || !isAdmin}
+              disabled={status === 'draft' || !canAdmin}
               onClick={() => setReviewOpen('withdraw')}
             >
               撤回
@@ -1216,19 +1485,59 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
         </Space>
       </Space>
 
-      {!isAdmin && (
+      {!canEdit && (
+        <Alert
+          type={myMembership?.status === 'pending' ? 'info' : 'warning'}
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={myMembership?.status === 'pending'
+            ? '参与申请待超级管理员审批'
+            : '只读：你不是该项目参与人员'}
+          description={
+            <span style={{ fontSize: 12 }}>
+              你可以查看本项目的全部内容（评估结果、审计轨迹、底稿导出）；
+              录入资产、执行计算等修改操作需要成为项目参与人员。
+              {myMembership?.status === 'pending'
+                ? '申请已提交，审批通过后即可修改。'
+                : '可点右侧按钮申请参与，由超级管理员审批。'}
+            </span>
+          }
+          action={isLoggedIn && myMembership?.status !== 'pending' ? (
+            <Button
+              type="primary"
+              size="small"
+              loading={applying}
+              onClick={() => {
+                void (async () => {
+                  setApplying(true);
+                  try {
+                    await applyMembership(projectId, '申请参与本项目');
+                    void message.success('申请已提交，等待超级管理员审批');
+                    await load();
+                  } catch (error) {
+                    showApiError(error, '提交申请失败');
+                  } finally {
+                    setApplying(false);
+                  }
+                })();
+              }}
+            >
+              申请参与
+            </Button>
+          ) : undefined}
+        />
+      )}
+      {canEdit && !canAdmin && (
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message={isLoggedIn ? '只读模式：当前账号无权修改该项目' : '只读模式：未登录'}
+          message="你是本项目参与人员：可修改项目数据；复核、签发、撤回、删除由超级管理员执行"
           description={
             <span style={{ fontSize: 12 }}>
-              评估结果、审计轨迹、底稿导出可正常查看；录入资产、执行计算、复核/签发/撤回、删除需
-              <Text strong>超级管理员</Text>登录。
+              当前账号：{user?.real_name}（{user?.role_label}）· 本项目参与人员
             </span>
           }
-          action={<Button size="small" href="/login">{isLoggedIn ? '查看账号' : '登录 / 注册'}</Button>}
         />
       )}
 
@@ -1296,7 +1605,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                   <Button
                     type="primary"
                     icon={<PlusOutlined />}
-                    disabled={!isDraft || !isAdmin}
+                    disabled={!isDraft || !canEdit}
                     onClick={() => {
                       setEditingAsset(null);
                       setAssetFormOpen(true);
@@ -1305,7 +1614,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                     新增资产
                   </Button>
                   <Upload beforeUpload={handleUpload} showUploadList={false} accept=".xlsx">
-                    <Button icon={<UploadOutlined />} disabled={!isDraft || !isAdmin} loading={busy}>
+                    <Button icon={<UploadOutlined />} disabled={!isDraft || !canEdit} loading={busy}>
                       Excel 批量导入
                     </Button>
                   </Upload>
@@ -1344,7 +1653,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                   <Button
                     type="primary"
                     icon={<PlusOutlined />}
-                    disabled={!isDraft || !isAdmin}
+                    disabled={!isDraft || !canEdit}
                     onClick={() => setScenarioOpen(true)}
                   >
                     新建场景
@@ -1391,7 +1700,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                       render: (_: unknown, row) => (
                         <Popconfirm
                           title="删除该场景？其计算结果将一并删除"
-                          disabled={!isDraft || !isAdmin}
+                          disabled={!isDraft || !canEdit}
                           onConfirm={() => {
                             void (async () => {
                               try {
@@ -1404,7 +1713,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                             })();
                           }}
                         >
-                          <Button type="link" size="small" danger disabled={!isDraft || !isAdmin}>
+                          <Button type="link" size="small" danger disabled={!isDraft || !canEdit}>
                             删除
                           </Button>
                         </Popconfirm>
@@ -1615,6 +1924,111 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
             ),
           },
           {
+            key: 'members',
+            label: `项目成员（${members.filter((m) => m.status === 'active').length}）`,
+            children: (
+              <>
+                <Space style={{ marginBottom: 12 }} wrap>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    disabled={!canAdmin}
+                    onClick={() => setMemberOpen(true)}
+                  >
+                    分配参与人员
+                  </Button>
+                  <Tag color={canAdmin ? 'gold' : 'default'}>
+                    {canAdmin ? '管理员：可增删成员并审批申请' : '仅管理员可管理成员'}
+                  </Tag>
+                  {members.filter((m) => m.status === 'pending').length > 0 && (
+                    <Tag color="orange">
+                      待审批 {members.filter((m) => m.status === 'pending').length} 个
+                    </Tag>
+                  )}
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    参与人员可修改本项目数据；未参与的人（项目相关人员/管理员）只能查看
+                  </Text>
+                </Space>
+                <Table<ProjectMember>
+                  rowKey="member_id"
+                  size="small"
+                  loading={loading}
+                  dataSource={members}
+                  pagination={false}
+                  columns={[
+                    { title: '姓名', dataIndex: 'real_name', width: 110, render: (v: string | null, row) => v || row.username || '-' },
+                    { title: '登录名', dataIndex: 'username', width: 130 },
+                    { title: '部门', dataIndex: 'department', width: 140, render: (v: string | null) => v || '-' },
+                    {
+                      title: '账号角色',
+                      dataIndex: 'user_role',
+                      width: 120,
+                      render: (v: string | null) => (v === 'admin'
+                        ? <Tag color="gold">超级管理员</Tag>
+                        : v === 'staff' ? <Tag color="blue">项目相关人员</Tag> : <Tag>一般人员</Tag>),
+                    },
+                    {
+                      title: '参与状态',
+                      dataIndex: 'status',
+                      width: 100,
+                      render: (value: string) => (
+                        <Tag color={value === 'active' ? 'green' : value === 'pending' ? 'orange' : 'default'}>
+                          {value === 'active' ? '已参与' : value === 'pending' ? '待审批' : '已驳回'}
+                        </Tag>
+                      ),
+                    },
+                    { title: '来源', dataIndex: 'source_label', width: 100 },
+                    {
+                      title: '申请说明 / 驳回原因',
+                      key: 'note',
+                      ellipsis: true,
+                      render: (_: unknown, row) => row.applied_note || row.reject_note || '-',
+                    },
+                    {
+                      title: '审批人',
+                      dataIndex: 'approved_by',
+                      width: 110,
+                      render: (value: string | null) => value || '-',
+                    },
+                    {
+                      title: '操作',
+                      key: 'op',
+                      width: 190,
+                      render: (_: unknown, row) => (
+                        <Space size={0} wrap>
+                          {row.status === 'pending' && (
+                            <>
+                              <Button type="link" size="small" disabled={!canAdmin || busy}
+                                      onClick={() => void handleMemberAction('approve', row)}>
+                                通过
+                              </Button>
+                              <Button type="link" size="small" danger disabled={!canAdmin || busy}
+                                      onClick={() => void handleMemberAction('reject', row)}>
+                                驳回
+                              </Button>
+                            </>
+                          )}
+                          {row.status !== 'pending' && (
+                            <Popconfirm
+                              title={`移除 ${row.real_name ?? row.username}？移除后其将看不到本项目`}
+                              disabled={!canAdmin || busy}
+                              onConfirm={() => void handleMemberAction('remove', row)}
+                            >
+                              <Button type="link" size="small" danger disabled={!canAdmin || busy}>
+                                移除
+                              </Button>
+                            </Popconfirm>
+                          )}
+                        </Space>
+                      ),
+                    },
+                  ]}
+                  locale={{ emptyText: <Empty description="还没有参与人员：可点「分配参与人员」添加，或等用户申请" /> }}
+                />
+              </>
+            ),
+          },
+          {
             key: 'materials',
             label: '材质映射',
             children: (
@@ -1652,6 +2066,7 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
                         <Button
                           type="link"
                           size="small"
+                          disabled={!canAdmin}
                           onClick={() => {
                             setMaterialEditing(row);
                             materialForm.setFieldsValue(row);
@@ -1753,6 +2168,35 @@ const ProjectWorkbench: React.FC<{ projectId: number; onBack: () => void }> = ({
             <Input.TextArea rows={3}
                             placeholder={reviewOpen === 'withdraw'
                               ? '如 参数填错需修正' : '如 参数与取价复核无误'} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="分配参与人员"
+        open={memberOpen}
+        onCancel={() => setMemberOpen(false)}
+        onOk={() => void submitMember()}
+        confirmLoading={busy}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="被分配的人将可以查看并修改本项目"
+          description={
+            <span style={{ fontSize: 12 }}>
+              一般人员被分配后也能看到本项目（其默认只能看自己参与的项目）。
+              对方需是「正常」状态的账号；也可让本人通过「找项目 / 申请参与」提交申请后在此审批。
+            </span>
+          }
+        />
+        <Form form={memberForm} layout="vertical">
+          <Form.Item name="username" label="对方登录名" rules={[{ required: true, message: '请输入登录名' }]}>
+            <Input placeholder="如 zhangsan" />
+          </Form.Item>
+          <Form.Item name="note" label="说明">
+            <Input placeholder="选填，如 本项目评估师" />
           </Form.Item>
         </Form>
       </Modal>

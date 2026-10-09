@@ -14,6 +14,11 @@ import { AuthContext, type AuthState } from './context';
 
 const TOKEN_KEY = 'dsh.auth.token';
 
+// 关键：在模块加载时（任何组件挂载之前）就把令牌注入 http 客户端。
+// 否则子组件的首个数据请求会早于 AuthProvider 的 effect 发出，导致没带令牌 → 401。
+const initialToken = typeof localStorage === 'undefined' ? null : localStorage.getItem(TOKEN_KEY);
+if (initialToken) setAuthToken(initialToken);
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);

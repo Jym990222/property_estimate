@@ -26,6 +26,10 @@ export interface ValuationProject {
   withdrawn_by: string | null;
   withdrawn_at: string | null;
   withdraw_note: string | null;
+  /** 列表附带：参与人数与我的参与状态 */
+  member_count?: number;
+  my_membership?: MemberStatus | null;
+  my_membership_source?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -167,6 +171,59 @@ export interface ProjectDetail {
   asset_count: number;
   result_count: number;
   computed: boolean;
+  /** 服务端判定的当前用户权限（客户端不再自己猜） */
+  my_membership: ProjectMember | null;
+  can_edit: boolean;
+  can_admin: boolean;
+  can_view_all_projects: boolean;
+  member_count: number;
+  pending_application_count: number;
+}
+
+export type MemberStatus = 'pending' | 'active' | 'rejected';
+
+export interface ProjectMember {
+  member_id: number;
+  project_id: number;
+  user_id: number;
+  member_role: string;
+  status: MemberStatus;
+  status_label: string;
+  source: 'admin' | 'application';
+  source_label: string;
+  applied_note: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  reject_note: string | null;
+  username?: string | null;
+  real_name?: string | null;
+  department?: string | null;
+  user_role?: string | null;
+  project_no?: string | null;
+  project_name?: string | null;
+  created_at?: string;
+}
+
+export interface DirectoryItem {
+  project_id: number;
+  project_no: string;
+  project_name: string;
+  base_date: string;
+  reference_city: string;
+  status: string;
+  status_label: string;
+  my_membership: MemberStatus | null;
+}
+
+export interface MyMembership {
+  project_id: number;
+  project_no: string;
+  project_name: string;
+  base_date: string;
+  status: string;
+  status_label: string;
+  membership_status: 'active' | 'pending';
+  membership_label: string;
 }
 
 export interface ImportOutcome {
@@ -220,6 +277,55 @@ export async function withdrawProject(
   payload: { withdrawn_by?: string; note?: string },
 ): Promise<ValuationProject> {
   return (await apiPost<ValuationProject>(`${BASE}/valuation-projects/${projectId}/withdrawals`, payload)).data;
+}
+
+// ---------- 项目参与人员 ----------
+export async function fetchMembers(projectId: number, status?: string): Promise<ProjectMember[]> {
+  return apiGetData<ProjectMember[]>(`${BASE}/valuation-projects/${projectId}/members`,
+    status ? { status } : undefined);
+}
+
+/** 管理员分配参与人员（user_id 或 username） */
+export async function addMember(
+  projectId: number,
+  payload: { user_id?: number; username?: string; note?: string },
+): Promise<ProjectMember> {
+  return (await apiPost<ProjectMember>(`${BASE}/valuation-projects/${projectId}/members`, payload)).data;
+}
+
+export async function removeMember(projectId: number, userId: number): Promise<void> {
+  await apiDelete(`${BASE}/valuation-projects/${projectId}/members/${userId}`);
+}
+
+/** 用户申请参与项目（待管理员审批） */
+export async function applyMembership(projectId: number, note?: string): Promise<ProjectMember> {
+  return (await apiPost<ProjectMember>(`${BASE}/valuation-projects/${projectId}/member-applications`,
+    { note })).data;
+}
+
+/** 参与申请列表（管理员） */
+export async function fetchMemberApplications(
+  params?: { status?: string; project_id?: number },
+): Promise<ProjectMember[]> {
+  return apiGetData<ProjectMember[]>(`${BASE}/member-applications`, params);
+}
+
+export async function approveMemberApplication(memberId: number): Promise<ProjectMember> {
+  return (await apiPost<ProjectMember>(`${BASE}/member-applications/${memberId}/approvals`)).data;
+}
+
+export async function rejectMemberApplication(memberId: number, note?: string): Promise<ProjectMember> {
+  return (await apiPost<ProjectMember>(`${BASE}/member-applications/${memberId}/rejections`, { note })).data;
+}
+
+/** 项目目录（任何登录用户可查，用于申请参与） */
+export async function fetchProjectDirectory(keyword?: string): Promise<DirectoryItem[]> {
+  return apiGetData<DirectoryItem[]>(`${BASE}/project-directory`, keyword ? { keyword } : undefined);
+}
+
+/** 我参与/申请中的项目 */
+export async function fetchMyMemberships(): Promise<MyMembership[]> {
+  return apiGetData<MyMembership[]>(`${BASE}/my-memberships`);
 }
 
 // ---------- 场景 ----------

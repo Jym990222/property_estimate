@@ -4,7 +4,7 @@ import { API_ORIGIN, apiDelete, apiGet, apiGetData, apiPatch, apiPost, type ApiE
 
 const BASE = `${API_ORIGIN}/api/auth/v1`;
 
-export type Role = 'admin' | 'member';
+export type Role = 'admin' | 'staff' | 'member';
 export type UserStatus = 'pending' | 'active' | 'disabled' | 'rejected';
 
 export interface AuthUser {

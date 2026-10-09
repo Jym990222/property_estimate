@@ -115,7 +115,8 @@ async function parseError(response: Response): Promise<ApiError> {
 async function request<T>(method: string, path: string, params?: Record<string, QueryValue>, body?: unknown): Promise<ApiEnvelope<T>> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json; charset=utf-8';
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  const sentToken = authToken;
+  if (sentToken) headers.Authorization = `Bearer ${sentToken}`;
   const response = await fetch(buildUrl(path, params), {
     method,
     headers: Object.keys(headers).length > 0 ? headers : undefined,
@@ -123,7 +124,8 @@ async function request<T>(method: string, path: string, params?: Record<string, 
   });
   if (!response.ok) {
     const error = await parseError(response);
-    if (error.status === 401) unauthorizedHandler?.(error);
+    // 只有“确实带了令牌却被拒”才说明会话失效；没带令牌的 401 不能清掉本地登录态
+    if (error.status === 401 && sentToken) unauthorizedHandler?.(error);
     throw error;
   }
   return (await response.json()) as ApiEnvelope<T>;
